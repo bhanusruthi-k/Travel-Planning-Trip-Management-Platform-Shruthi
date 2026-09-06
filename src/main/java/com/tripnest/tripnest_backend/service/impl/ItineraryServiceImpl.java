@@ -4,7 +4,6 @@ import com.tripnest.tripnest_backend.dto.itinerary.ActivityRequestDTO;
 import com.tripnest.tripnest_backend.dto.itinerary.ActivityResponseDTO;
 import com.tripnest.tripnest_backend.dto.itinerary.ItineraryDayRequestDTO;
 import com.tripnest.tripnest_backend.dto.itinerary.ItineraryDayResponseDTO;
-import com.tripnest.tripnest_backend.exception.ForbiddenException;
 import com.tripnest.tripnest_backend.exception.ResourceNotFoundException;
 import com.tripnest.tripnest_backend.model.*;
 import com.tripnest.tripnest_backend.repository.ActivityRepository;
@@ -12,6 +11,7 @@ import com.tripnest.tripnest_backend.repository.ItineraryDayRepository;
 import com.tripnest.tripnest_backend.repository.TripRepository;
 import com.tripnest.tripnest_backend.repository.UserRepository;
 import com.tripnest.tripnest_backend.service.ItineraryService;
+import com.tripnest.tripnest_backend.service.TripAccessService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -27,6 +27,7 @@ public class ItineraryServiceImpl implements ItineraryService {
     private final UserRepository userRepository;
     private final ItineraryDayRepository itineraryDayRepository;
     private final ActivityRepository activityRepository;
+    private final TripAccessService tripAccessService;
 
     @Override
     @Transactional
@@ -34,7 +35,7 @@ public class ItineraryServiceImpl implements ItineraryService {
         User user = getUser(userEmail);
         Trip trip = tripRepository.findByIdWithDetails(tripId)
                 .orElseThrow(() -> new ResourceNotFoundException("Trip not found with id: " + tripId));
-        validateOwnership(trip, user);
+        tripAccessService.validateTripAccess(user, trip);
 
         ItineraryDay day = ItineraryDay.builder()
                 .dayNumber(dto.getDayNumber())
@@ -53,7 +54,7 @@ public class ItineraryServiceImpl implements ItineraryService {
         User user = getUser(userEmail);
         Trip trip = tripRepository.findByIdWithDetails(tripId)
                 .orElseThrow(() -> new ResourceNotFoundException("Trip not found with id: " + tripId));
-        validateOwnership(trip, user);
+        tripAccessService.validateTripAccess(user, trip);
 
         List<ItineraryDay> days = itineraryDayRepository.findByTripIdWithActivitiesOrderByDayNumberAsc(tripId);
         return days.stream().map(this::mapToDayDTO).collect(Collectors.toList());
@@ -65,7 +66,7 @@ public class ItineraryServiceImpl implements ItineraryService {
         User user = getUser(userEmail);
         Trip trip = tripRepository.findByIdWithDetails(tripId)
                 .orElseThrow(() -> new ResourceNotFoundException("Trip not found with id: " + tripId));
-        validateOwnership(trip, user);
+        tripAccessService.validateTripAccess(user, trip);
 
         ItineraryDay day = itineraryDayRepository.findByIdAndTripId(dayId, tripId)
                 .orElseThrow(() -> new ResourceNotFoundException("Itinerary day not found with id: " + dayId));
@@ -79,7 +80,7 @@ public class ItineraryServiceImpl implements ItineraryService {
         User user = getUser(userEmail);
         ItineraryDay day = itineraryDayRepository.findById(dayId)
                 .orElseThrow(() -> new ResourceNotFoundException("Itinerary day not found with id: " + dayId));
-        validateOwnership(day.getTrip(), user);
+        tripAccessService.validateTripAccess(user, day.getTrip());
 
         Activity activity = Activity.builder()
                 .time(dto.getTime())
@@ -100,7 +101,7 @@ public class ItineraryServiceImpl implements ItineraryService {
         User user = getUser(userEmail);
         Activity activity = activityRepository.findById(activityId)
                 .orElseThrow(() -> new ResourceNotFoundException("Activity not found with id: " + activityId));
-        validateOwnership(activity.getItineraryDay().getTrip(), user);
+        tripAccessService.validateTripAccess(user, activity.getItineraryDay().getTrip());
 
         if (dto.getTitle() != null) activity.setTitle(dto.getTitle());
         if (dto.getTime() != null) activity.setTime(dto.getTime());
@@ -118,7 +119,7 @@ public class ItineraryServiceImpl implements ItineraryService {
         User user = getUser(userEmail);
         Activity activity = activityRepository.findById(activityId)
                 .orElseThrow(() -> new ResourceNotFoundException("Activity not found with id: " + activityId));
-        validateOwnership(activity.getItineraryDay().getTrip(), user);
+        tripAccessService.validateTripAccess(user, activity.getItineraryDay().getTrip());
 
         activityRepository.delete(activity);
     }
@@ -126,15 +127,6 @@ public class ItineraryServiceImpl implements ItineraryService {
     private User getUser(String email) {
         return userRepository.findByEmail(email)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found with email: " + email));
-    }
-
-    private void validateOwnership(Trip trip, User user) {
-        if (user.getRole() == Role.ADMINISTRATOR) {
-            return;
-        }
-        if (!trip.getUser().getId().equals(user.getId())) {
-            throw new ForbiddenException("You do not have permission to modify this trip itinerary.");
-        }
     }
 
     public ItineraryDayResponseDTO mapToDayDTO(ItineraryDay day) {

@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { tripApi } from '../api/tripApi';
 import { itineraryApi } from '../api/itineraryApi';
 import { budgetApi } from '../api/budgetApi';
+import { expenseApi } from '../api/expenseApi';
 import { useToast } from '../context/ToastContext';
 import {
   Calendar,
@@ -11,7 +12,6 @@ import {
   Edit2,
   Trash2,
   Clock,
-  DollarSign,
   ArrowLeft,
   AlertCircle,
   X,
@@ -24,13 +24,30 @@ import {
   Utensils,
   Plane,
   Ticket,
-  ShieldCheck,
-  Percent,
-  Sparkles,
-  TrendingDown,
   Coins,
-  ChevronRight,
+  ShoppingBag,
+  CreditCard,
+  Search,
+  ExternalLink,
+  PieChart,
+  BarChart3,
+  CheckCircle2,
+  AlertTriangle,
+  ArrowUpRight,
 } from 'lucide-react';
+import {
+  Chart as ChartJS,
+  ArcElement,
+  Tooltip,
+  Legend,
+  CategoryScale,
+  LinearScale,
+  BarElement,
+  Title as ChartTitle,
+} from 'chart.js';
+
+// Register Chart.js components
+ChartJS.register(ArcElement, Tooltip, Legend, CategoryScale, LinearScale, BarElement, ChartTitle);
 
 const CURRENCIES = [
   { code: 'USD', symbol: '$', name: 'US Dollar' },
@@ -44,6 +61,15 @@ const CURRENCIES = [
   { code: 'AED', symbol: 'AED', name: 'UAE Dirham' },
 ];
 
+const FIXED_EXPENSE_CATEGORIES = [
+  { id: 'Transportation', label: 'Transportation', icon: Plane, color: '#0ea5e9', emoji: '✈️' },
+  { id: 'Hotel', label: 'Hotel', icon: Building2, color: '#6366f1', emoji: '🏨' },
+  { id: 'Food', label: 'Food', icon: Utensils, color: '#f59e0b', emoji: '🍜' },
+  { id: 'Shopping', label: 'Shopping', icon: ShoppingBag, color: '#ec4899', emoji: '🛍️' },
+  { id: 'Entertainment', label: 'Entertainment', icon: Ticket, color: '#8b5cf6', emoji: '🎟️' },
+  { id: 'Miscellaneous', label: 'Miscellaneous', icon: Receipt, color: '#10b981', emoji: '🏷️' },
+];
+
 const BUDGET_TIERS = ['Backpacker / Budget', 'Smart Mid-Range', 'Comfort & Boutique', 'Luxury Escape', 'Business / Work'];
 
 const TripDetailsPage = () => {
@@ -51,11 +77,20 @@ const TripDetailsPage = () => {
   const [trip, setTrip] = useState(null);
   const [days, setDays] = useState([]);
   const [budget, setBudget] = useState(null);
+  const [expenses, setExpenses] = useState([]);
+  const [categorySummaries, setCategorySummaries] = useState([]);
+  const [budgetExpenseSummary, setBudgetExpenseSummary] = useState(null);
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
   // Active view section
-  const [activeSection, setActiveSection] = useState('all'); // 'all', 'itinerary', 'budget'
+  const [activeSection, setActiveSection] = useState('all'); // 'all', 'budget_expenses', 'itinerary'
+
+  // Expense Filter & Search
+  const [expenseFilterCategory, setExpenseFilterCategory] = useState('ALL');
+  const [expenseSearchQuery, setExpenseSearchQuery] = useState('');
+  const [chartType, setChartType] = useState('doughnut'); // 'doughnut' | 'bar'
 
   // Day Modal
   const [isDayModalOpen, setIsDayModalOpen] = useState(false);
@@ -89,22 +124,45 @@ const TripDetailsPage = () => {
     emergencyBudget: '',
   });
   const [budgetModalLoading, setBudgetModalLoading] = useState(false);
-  const [modalError, setModalError] = useState('');
 
+  // Expense Modal
+  const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
+  const [editingExpenseId, setEditingExpenseId] = useState(null);
+  const [expenseFormData, setExpenseFormData] = useState({
+    title: '',
+    category: 'Food',
+    amount: '',
+    expenseDate: new Date().toISOString().split('T')[0],
+    receiptUrl: '',
+    description: '',
+  });
+  const [expenseModalLoading, setExpenseModalLoading] = useState(false);
+
+  const [modalError, setModalError] = useState('');
   const { showToast } = useToast();
+
+  // Chart ref
+  const chartCanvasRef = useRef(null);
+  const chartInstanceRef = useRef(null);
 
   const loadTripData = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
-      const [tripData, daysData, budgetData] = await Promise.all([
+      const [tripData, daysData, budgetData, expensesData, catSummaryData, bSummaryData] = await Promise.all([
         tripApi.getTripById(id),
         itineraryApi.getItineraryForTrip(id),
         budgetApi.getBudget(id).catch(() => null),
+        expenseApi.getExpenses(id).catch(() => []),
+        expenseApi.getCategorySummary(id).catch(() => []),
+        expenseApi.getRemainingBudget(id).catch(() => null),
       ]);
       setTrip(tripData);
-      setDays(daysData);
+      setDays(daysData || []);
       setBudget(budgetData);
+      setExpenses(expensesData || []);
+      setCategorySummaries(catSummaryData || []);
+      setBudgetExpenseSummary(bSummaryData);
     } catch (err) {
       console.error('Failed to load trip details:', err);
       setError(err.response?.data?.message || 'Trip not found or access denied.');
@@ -118,17 +176,156 @@ const TripDetailsPage = () => {
   }, [loadTripData]);
 
   // Currency Formatter Helper
-  const getCurrencySymbol = (code = 'USD') => {
+  const activeCurrencyCode = budget?.currency || budgetExpenseSummary?.currency || 'USD';
+
+  const getCurrencySymbol = (code = activeCurrencyCode) => {
     const match = CURRENCIES.find((c) => c.code === code.toUpperCase());
     return match ? match.symbol : '$';
   };
 
-  const formatMoney = (val, code = budget?.currency || 'USD') => {
+  const formatMoney = (val, code = activeCurrencyCode) => {
     if (val === null || val === undefined || isNaN(val)) return '—';
     const num = typeof val === 'string' ? parseFloat(val) : Number(val);
     const sym = getCurrencySymbol(code);
     return `${sym}${Math.round(num).toLocaleString()}`;
   };
+
+  // Render & Update Chart.js Instance
+  useEffect(() => {
+    if (!chartCanvasRef.current) return;
+
+    // Cleanup previous chart instance
+    if (chartInstanceRef.current) {
+      chartInstanceRef.current.destroy();
+      chartInstanceRef.current = null;
+    }
+
+    if (!categorySummaries || categorySummaries.length === 0) return;
+
+    const ctx = chartCanvasRef.current.getContext('2d');
+    if (!ctx) return;
+
+    const labels = categorySummaries.map((c) => c.category);
+    const dataValues = categorySummaries.map((c) => (c.totalAmount ? parseFloat(c.totalAmount) : 0));
+
+    // Map category colors
+    const colors = categorySummaries.map((c) => {
+      const match = FIXED_EXPENSE_CATEGORIES.find(
+        (cat) => cat.id.toLowerCase() === c.category.toLowerCase()
+      );
+      return match ? match.color : '#94a3b8';
+    });
+
+    const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+    const textColor = isDark ? '#f8fafc' : '#0f172a';
+    const gridColor = isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)';
+
+    if (chartType === 'doughnut') {
+      chartInstanceRef.current = new ChartJS(ctx, {
+        type: 'doughnut',
+        data: {
+          labels,
+          datasets: [
+            {
+              data: dataValues,
+              backgroundColor: colors,
+              borderColor: isDark ? '#111827' : '#ffffff',
+              borderWidth: 3,
+              hoverOffset: 8,
+              borderRadius: 6,
+            },
+          ],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          cutout: '72%',
+          plugins: {
+            legend: {
+              display: false,
+            },
+            tooltip: {
+              backgroundColor: isDark ? 'rgba(17, 24, 39, 0.95)' : 'rgba(15, 23, 42, 0.9)',
+              titleColor: '#ffffff',
+              bodyColor: '#f1f5f9',
+              padding: 12,
+              cornerRadius: 10,
+              boxPadding: 6,
+              callbacks: {
+                label: (item) => {
+                  const val = item.raw || 0;
+                  const sym = getCurrencySymbol(activeCurrencyCode);
+                  const total = dataValues.reduce((a, b) => a + b, 0);
+                  const pct = total > 0 ? Math.round((val / total) * 100) : 0;
+                  return ` ${item.label}: ${sym}${val.toLocaleString()} (${pct}%)`;
+                },
+              },
+            },
+          },
+        },
+      });
+    } else {
+      chartInstanceRef.current = new ChartJS(ctx, {
+        type: 'bar',
+        data: {
+          labels,
+          datasets: [
+            {
+              label: `Amount (${activeCurrencyCode})`,
+              data: dataValues,
+              backgroundColor: colors,
+              borderRadius: 8,
+              borderSkipped: false,
+            },
+          ],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: {
+              display: false,
+            },
+            tooltip: {
+              backgroundColor: isDark ? 'rgba(17, 24, 39, 0.95)' : 'rgba(15, 23, 42, 0.9)',
+              titleColor: '#ffffff',
+              bodyColor: '#f1f5f9',
+              padding: 12,
+              cornerRadius: 10,
+              callbacks: {
+                label: (item) => {
+                  const val = item.raw || 0;
+                  const sym = getCurrencySymbol(activeCurrencyCode);
+                  return ` ${item.label}: ${sym}${val.toLocaleString()}`;
+                },
+              },
+            },
+          },
+          scales: {
+            x: {
+              grid: { display: false },
+              ticks: { color: textColor, font: { family: "'Plus Jakarta Sans', sans-serif", weight: '600' } },
+            },
+            y: {
+              grid: { color: gridColor },
+              ticks: {
+                color: textColor,
+                callback: (val) => `${getCurrencySymbol(activeCurrencyCode)}${val}`,
+                font: { family: "'Plus Jakarta Sans', sans-serif" },
+              },
+            },
+          },
+        },
+      });
+    }
+
+    return () => {
+      if (chartInstanceRef.current) {
+        chartInstanceRef.current.destroy();
+        chartInstanceRef.current = null;
+      }
+    };
+  }, [categorySummaries, chartType, activeCurrencyCode]);
 
   // Day handlers
   const openAddDayModal = () => {
@@ -280,8 +477,8 @@ const TripDetailsPage = () => {
         emergencyBudget: budget.emergencyBudget ? String(budget.emergencyBudget) : '',
       });
     } else {
-      const fallbackTotal = trip?.budget ? String(trip.budget) : (trip?.destination?.averageCost ? String(trip.destination.averageCost) : '2000');
-      const totNum = parseFloat(fallbackTotal) || 2000;
+      const fallbackTotal = trip?.budget ? String(trip.budget) : (trip?.destination?.averageCost ? String(trip.destination.averageCost) : '2500');
+      const totNum = parseFloat(fallbackTotal) || 2500;
       setBudgetFormData({
         totalBudget: String(totNum),
         currency: 'USD',
@@ -333,7 +530,7 @@ const TripDetailsPage = () => {
 
     const sumAllocated = stay + food + transit + acts + buffer;
     if (sumAllocated > tot) {
-      setModalError(`Total of categories (${getCurrencySymbol(budgetFormData.currency)}${sumAllocated.toLocaleString()}) exceeds your overall budget (${getCurrencySymbol(budgetFormData.currency)}${tot.toLocaleString()}). Please adjust allocations.`);
+      setModalError(`Total of categories (${getCurrencySymbol(budgetFormData.currency)}${sumAllocated.toLocaleString()}) exceeds overall budget (${getCurrencySymbol(budgetFormData.currency)}${tot.toLocaleString()}). Please adjust allocations.`);
       return;
     }
 
@@ -385,6 +582,102 @@ const TripDetailsPage = () => {
     }
   };
 
+  // ==========================================
+  // EXPENSE HANDLERS
+  // ==========================================
+  const openAddExpenseModal = () => {
+    setEditingExpenseId(null);
+    setExpenseFormData({
+      title: '',
+      category: 'Food',
+      amount: '',
+      expenseDate: new Date().toISOString().split('T')[0],
+      receiptUrl: '',
+      description: '',
+    });
+    setModalError('');
+    setIsExpenseModalOpen(true);
+  };
+
+  const openEditExpenseModal = (exp) => {
+    setEditingExpenseId(exp.id);
+    setExpenseFormData({
+      title: exp.title || '',
+      category: exp.category || 'Food',
+      amount: exp.amount ? String(exp.amount) : '',
+      expenseDate: exp.expenseDate || new Date().toISOString().split('T')[0],
+      receiptUrl: exp.receiptUrl || '',
+      description: exp.description || '',
+    });
+    setModalError('');
+    setIsExpenseModalOpen(true);
+  };
+
+  const handleExpenseSubmit = async (e) => {
+    e.preventDefault();
+    setModalError('');
+
+    if (!expenseFormData.title.trim()) {
+      setModalError('Expense title is required.');
+      return;
+    }
+
+    const amt = parseFloat(expenseFormData.amount);
+    if (!amt || isNaN(amt) || amt <= 0) {
+      setModalError('Expense amount must be a positive number greater than zero.');
+      return;
+    }
+
+    if (!expenseFormData.expenseDate) {
+      setModalError('Expense date is required.');
+      return;
+    }
+
+    setExpenseModalLoading(true);
+
+    try {
+      const payload = {
+        title: expenseFormData.title.trim(),
+        category: expenseFormData.category,
+        amount: amt,
+        expenseDate: expenseFormData.expenseDate,
+        receiptUrl: expenseFormData.receiptUrl.trim() || null,
+        description: expenseFormData.description.trim() || null,
+      };
+
+      if (editingExpenseId) {
+        await expenseApi.updateExpense(id, editingExpenseId, payload);
+        showToast('Expense updated successfully!', 'success');
+      } else {
+        await expenseApi.createExpense(id, payload);
+        showToast('New expense logged in trip ledger!', 'success');
+      }
+
+      setIsExpenseModalOpen(false);
+      await loadTripData();
+    } catch (err) {
+      console.error('Failed to save expense:', err);
+      const msg = err.response?.data?.message || 'Failed to save expense.';
+      setModalError(msg);
+      showToast(msg, 'error');
+    } finally {
+      setExpenseModalLoading(false);
+    }
+  };
+
+  const handleDeleteExpense = async (expenseId, expenseTitle) => {
+    if (window.confirm(`Delete expense "${expenseTitle}"?`)) {
+      try {
+        await expenseApi.deleteExpense(id, expenseId);
+        showToast(`Expense "${expenseTitle}" removed`, 'info');
+        await loadTripData();
+      } catch (err) {
+        console.error('Failed to delete expense:', err);
+        showToast(err.response?.data?.message || 'Failed to delete expense.', 'error');
+      }
+    }
+  };
+
   const getStatusBadge = (status) => {
     switch (status) {
       case 'ONGOING':
@@ -404,36 +697,43 @@ const TripDetailsPage = () => {
     0
   );
 
-  const totalSpentCost = days.reduce((acc, d) => {
-    if (!d.activities) return acc;
-    return (
-      acc +
-      d.activities.reduce((sub, a) => sub + (a.cost ? parseFloat(a.cost) : 0), 0)
-    );
-  }, 0);
+  const activeBudgetAmount = budgetExpenseSummary?.totalBudget
+    ? parseFloat(budgetExpenseSummary.totalBudget)
+    : budget?.totalBudget
+    ? parseFloat(budget.totalBudget)
+    : trip?.budget || 0;
 
-  const activeBudgetAmount = budget?.totalBudget ? parseFloat(budget.totalBudget) : (trip?.budget || 0);
-  const activeCurrency = budget?.currency || 'USD';
-  const remainingBudget = activeBudgetAmount ? activeBudgetAmount - totalSpentCost : null;
-  const budgetSpentPercentage =
+  const totalSpentExpenses = budgetExpenseSummary?.totalExpenses
+    ? parseFloat(budgetExpenseSummary.totalExpenses)
+    : expenses.reduce((sum, e) => sum + (e.amount ? parseFloat(e.amount) : 0), 0);
+
+  const remainingBudgetAmount = budgetExpenseSummary?.remainingBudget !== undefined
+    ? parseFloat(budgetExpenseSummary.remainingBudget)
+    : activeBudgetAmount - totalSpentExpenses;
+
+  const isOverBudget = remainingBudgetAmount < 0;
+  const budgetSpentPct =
     activeBudgetAmount > 0
-      ? Math.min(Math.round((totalSpentCost / activeBudgetAmount) * 100), 100)
+      ? Math.min(Math.round((totalSpentExpenses / activeBudgetAmount) * 100), 100)
       : 0;
 
-  // Category breakdowns
-  const accommodationVal = budget?.accommodationBudget ? parseFloat(budget.accommodationBudget) : 0;
-  const foodVal = budget?.foodBudget ? parseFloat(budget.foodBudget) : 0;
-  const transitVal = budget?.transportationBudget ? parseFloat(budget.transportationBudget) : 0;
-  const activitiesVal = budget?.activitiesBudget ? parseFloat(budget.activitiesBudget) : 0;
-  const emergencyVal = budget?.emergencyBudget ? parseFloat(budget.emergencyBudget) : 0;
-  const totalAllocatedVal = budget?.totalAllocated ? parseFloat(budget.totalAllocated) : (accommodationVal + foodVal + transitVal + activitiesVal + emergencyVal);
-  const unallocatedVal = budget?.remainingUnallocated ? parseFloat(budget.remainingUnallocated) : Math.max(0, activeBudgetAmount - totalAllocatedVal);
+  // Filtered expenses list
+  const filteredExpenses = expenses.filter((e) => {
+    const matchesCategory =
+      expenseFilterCategory === 'ALL' ||
+      e.category?.toLowerCase() === expenseFilterCategory.toLowerCase();
+    const matchesSearch =
+      !expenseSearchQuery ||
+      e.title?.toLowerCase().includes(expenseSearchQuery.toLowerCase()) ||
+      e.description?.toLowerCase().includes(expenseSearchQuery.toLowerCase());
+    return matchesCategory && matchesSearch;
+  });
 
   if (loading) {
     return (
       <div className="page-container loading-state">
         <div className="spinner"></div>
-        <p>Loading trip overview, daily schedule, and budget command center...</p>
+        <p>Loading trip details, budget ledger, and expenses...</p>
       </div>
     );
   }
@@ -499,15 +799,23 @@ const TripDetailsPage = () => {
               {getStatusBadge(trip.status)}
             </div>
 
-            {/* Quick Actions */}
+            {/* Hero Quick Actions */}
             <div className="trip-hero-action-buttons">
+              <button
+                onClick={openAddExpenseModal}
+                className="btn-hero-expense-pill"
+                title="Log New Expense"
+              >
+                <Plus size={15} />
+                <span>Log Expense</span>
+              </button>
               <button
                 onClick={openCreateOrEditBudgetModal}
                 className="btn-hero-budget-pill"
                 title="Manage Trip Budget"
               >
                 <Wallet size={15} />
-                <span>{budget ? 'Edit Budget Plan' : 'Set Budget Plan'}</span>
+                <span>{budget ? 'Edit Budget' : 'Set Budget'}</span>
               </button>
             </div>
           </div>
@@ -537,10 +845,22 @@ const TripDetailsPage = () => {
             </div>
 
             <div className="hero-metric-item">
+              <CreditCard size={18} />
+              <div>
+                <span className="metric-title">Expenses Logged</span>
+                <span className="metric-val">
+                  {formatMoney(totalSpentExpenses, activeCurrencyCode)} ({expenses.length} records)
+                </span>
+              </div>
+            </div>
+
+            <div className="hero-metric-item">
               <Coins size={18} />
               <div>
-                <span className="metric-title">Total Budget ({activeCurrency})</span>
-                <span className="metric-val">{formatMoney(activeBudgetAmount, activeCurrency)}</span>
+                <span className="metric-title">Remaining Budget</span>
+                <span className={`metric-val ${isOverBudget ? 'text-deficit' : 'text-surplus'}`}>
+                  {formatMoney(Math.abs(remainingBudgetAmount), activeCurrencyCode)} {isOverBudget ? 'Deficit' : 'Surplus'}
+                </span>
               </div>
             </div>
           </div>
@@ -560,13 +880,15 @@ const TripDetailsPage = () => {
         </button>
         <button
           role="tab"
-          aria-selected={activeSection === 'budget'}
-          onClick={() => setActiveSection('budget')}
-          className={`section-tab-btn ${activeSection === 'budget' ? 'active' : ''}`}
+          aria-selected={activeSection === 'budget_expenses'}
+          onClick={() => setActiveSection('budget_expenses')}
+          className={`section-tab-btn ${activeSection === 'budget_expenses' ? 'active' : ''}`}
         >
-          <Wallet size={16} />
-          <span>Budget & Financials</span>
-          {budget && <span className="tab-pill-badge">{activeCurrency} {formatMoney(activeBudgetAmount, activeCurrency)}</span>}
+          <Receipt size={16} />
+          <span>Budget & Expense Ledger</span>
+          {expenses.length > 0 && (
+            <span className="tab-pill-badge">{expenses.length} logged</span>
+          )}
         </button>
         <button
           role="tab"
@@ -580,231 +902,429 @@ const TripDetailsPage = () => {
       </div>
 
       {/* ====================================================================
-          1. BUDGET MANAGEMENT & FINANCIAL COMMAND CENTER
+          1. REDESIGNED BUDGET & EXPENSE TRACKING MODULE (HUMAN TRAVEL JOURNAL)
           ==================================================================== */}
-      {(activeSection === 'all' || activeSection === 'budget') && (
-        <section className="budget-command-center-section" id="budget-hub">
-          <div className="budget-section-header">
-            <div className="budget-title-block">
-              <div className="budget-section-icon-badge">
-                <PiggyBank size={20} />
+      {(activeSection === 'all' || activeSection === 'budget_expenses') && (
+        <section className="travel-ledger-section" id="budget-expenses-hub">
+          {/* Section Banner */}
+          <div className="ledger-header-panel">
+            <div className="ledger-title-group">
+              <div className="ledger-passport-stamp">
+                <PiggyBank size={22} />
               </div>
               <div>
-                <h2 className="budget-section-main-title">Trip Budget Management</h2>
-                <p className="budget-section-subtitle">
-                  Financial allocations, category breakdown, currency management, and live activity expense tracking.
+                <div className="ledger-badge-row">
+                  <span className="passport-sub-tag">Voyage Financial Passport</span>
+                  <span className="currency-tag-stamp">
+                    {activeCurrencyCode} ({getCurrencySymbol(activeCurrencyCode)})
+                  </span>
+                </div>
+                <h2 className="ledger-main-title">Trip Budget & Live Expense Ledger</h2>
+                <p className="ledger-subtitle">
+                  Track real travel expenses, categorize expenditures, monitor category burn rates, and verify your live remaining budget balance.
                 </p>
               </div>
             </div>
 
-            <div className="budget-header-actions">
-              {budget ? (
-                <div className="budget-actions-group">
-                  <button onClick={openCreateOrEditBudgetModal} className="btn-secondary btn-budget-edit">
-                    <Edit2 size={14} />
-                    <span>Edit Budget</span>
-                  </button>
-                  <button onClick={handleDeleteBudget} className="btn-danger-outline" title="Reset Budget Plan">
-                    <Trash2 size={14} />
-                  </button>
-                </div>
-              ) : (
-                <button onClick={openCreateOrEditBudgetModal} className="btn-primary btn-budget-init">
-                  <Plus size={16} />
-                  <span>Create Budget Plan</span>
+            <div className="ledger-cta-group">
+              <button onClick={openAddExpenseModal} className="btn-primary btn-log-expense">
+                <Plus size={16} />
+                <span>Log Expense</span>
+              </button>
+              <button onClick={openCreateOrEditBudgetModal} className="btn-secondary btn-adjust-budget">
+                <Edit2 size={14} />
+                <span>{budget ? 'Adjust Budget' : 'Set Budget'}</span>
+              </button>
+              {budget && (
+                <button
+                  onClick={handleDeleteBudget}
+                  className="btn-icon-action btn-delete-expense"
+                  title="Reset Budget Plan"
+                  aria-label="Reset Budget Plan"
+                >
+                  <Trash2 size={14} />
                 </button>
               )}
             </div>
           </div>
 
-          {!budget ? (
-            /* Empty State for Budget */
-            <div className="budget-empty-card">
-              <div className="budget-empty-icon-wrap">
-                <Wallet size={36} />
+          {/* Top 3 Financial Passport Cards */}
+          <div className="passport-finance-grid">
+            {/* Total Budget Card */}
+            <div className="passport-card budget-vault-card">
+              <div className="passport-card-header">
+                <span className="card-micro-label">Total Allocated Budget</span>
+                <div className="card-icon-bubble vault-bubble">
+                  <Wallet size={18} />
+                </div>
               </div>
-              <h3 className="budget-empty-title">No Custom Budget Initialized</h3>
-              <p className="budget-empty-desc">
-                Set up a tailored financial plan for {trip.title}. Allocate target amounts for accommodation, food, transportation, activities, and emergency buffer.
-              </p>
-              <div className="budget-empty-perks">
-                <span className="perk-item"><Percent size={13} /> Custom category limits</span>
-                <span className="perk-item"><Coins size={13} /> Multi-currency support</span>
-                <span className="perk-item"><TrendingDown size={13} /> Real-time activity burn rate</span>
+              <div className="passport-amount-display">
+                <span className="passport-currency-symbol">{getCurrencySymbol(activeCurrencyCode)}</span>
+                <span className="passport-amount-number">
+                  {Math.round(activeBudgetAmount).toLocaleString()}
+                </span>
               </div>
-              <button onClick={openCreateOrEditBudgetModal} className="btn-primary mt-3">
-                <Plus size={16} />
-                <span>Initialize Trip Budget</span>
+              <div className="passport-card-footer">
+                <span className="footer-status-tag">
+                  {budget?.category || 'Custom Plan'}
+                </span>
+                <button onClick={openCreateOrEditBudgetModal} className="card-link-action">
+                  Edit Plan <ArrowUpRight size={13} />
+                </button>
+              </div>
+            </div>
+
+            {/* Total Expenses Card */}
+            <div className="passport-card expenses-spent-card">
+              <div className="passport-card-header">
+                <span className="card-micro-label">Total Money Spent</span>
+                <div className="card-icon-bubble spent-bubble">
+                  <TrendingDown size={18} />
+                </div>
+              </div>
+              <div className="passport-amount-display">
+                <span className="passport-currency-symbol">{getCurrencySymbol(activeCurrencyCode)}</span>
+                <span className="passport-amount-number text-spent">
+                  {Math.round(totalSpentExpenses).toLocaleString()}
+                </span>
+              </div>
+              <div className="passport-card-footer">
+                <span className="footer-status-tag">
+                  {expenses.length} receipts & expenses logged
+                </span>
+                <span className="burn-rate-tag">
+                  {budgetSpentPct}% consumed
+                </span>
+              </div>
+            </div>
+
+            {/* Remaining Balance Card */}
+            <div className={`passport-card balance-card ${isOverBudget ? 'card-deficit-state' : 'card-surplus-state'}`}>
+              <div className="passport-card-header">
+                <span className="card-micro-label">Remaining Safe Balance</span>
+                <div className={`card-icon-bubble ${isOverBudget ? 'deficit-bubble' : 'surplus-bubble'}`}>
+                  {isOverBudget ? <AlertTriangle size={18} /> : <CheckCircle2 size={18} />}
+                </div>
+              </div>
+              <div className="passport-amount-display">
+                <span className="passport-currency-symbol">{getCurrencySymbol(activeCurrencyCode)}</span>
+                <span className={`passport-amount-number ${isOverBudget ? 'text-deficit' : 'text-surplus'}`}>
+                  {Math.round(Math.abs(remainingBudgetAmount)).toLocaleString()}
+                </span>
+              </div>
+              <div className="passport-card-footer">
+                <span className={`footer-status-tag ${isOverBudget ? 'badge-deficit' : 'badge-surplus'}`}>
+                  {isOverBudget ? 'Exceeds Total Budget' : 'Safe Spending Margin'}
+                </span>
+                <span className="balance-pct-tag">
+                  {isOverBudget ? 'Over Budget' : `${100 - budgetSpentPct}% left`}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Middle Row: Category Chart & Breakdown Analysis */}
+          <div className="ledger-analytics-split">
+            {/* Chart Column */}
+            <div className="analytics-card chart-analytics-card">
+              <div className="analytics-card-header">
+                <div className="analytics-title-wrap">
+                  <PieChart size={18} className="analytics-icon" />
+                  <div>
+                    <h3 className="analytics-title">Spending by Category</h3>
+                    <span className="analytics-sub">Live visual distribution from category API</span>
+                  </div>
+                </div>
+
+                <div className="chart-type-toggle">
+                  <button
+                    onClick={() => setChartType('doughnut')}
+                    className={`chart-type-btn ${chartType === 'doughnut' ? 'active' : ''}`}
+                    title="Doughnut Chart"
+                    aria-label="Doughnut Chart View"
+                  >
+                    <PieChart size={14} />
+                  </button>
+                  <button
+                    onClick={() => setChartType('bar')}
+                    className={`chart-type-btn ${chartType === 'bar' ? 'active' : ''}`}
+                    title="Bar Chart"
+                    aria-label="Bar Chart View"
+                  >
+                    <BarChart3 size={14} />
+                  </button>
+                </div>
+              </div>
+
+              {categorySummaries.length === 0 ? (
+                <div className="chart-empty-state">
+                  <Receipt size={36} className="empty-chart-icon" />
+                  <h4>No Category Expenses Yet</h4>
+                  <p>Log your first travel expense to unlock live visual spending analytics.</p>
+                  <button onClick={openAddExpenseModal} className="btn-primary mt-2">
+                    <Plus size={14} />
+                    <span>Log First Expense</span>
+                  </button>
+                </div>
+              ) : (
+                <div className="chart-canvas-container">
+                  <div className="canvas-wrapper">
+                    <canvas ref={chartCanvasRef} />
+                  </div>
+
+                  {/* Bespoke Category Legend Grid */}
+                  <div className="category-legend-grid">
+                    {categorySummaries.map((catSummary) => {
+                      const matchedCat = FIXED_EXPENSE_CATEGORIES.find(
+                        (c) => c.id.toLowerCase() === catSummary.category.toLowerCase()
+                      ) || { color: '#94a3b8', emoji: '🏷️' };
+
+                      return (
+                        <div key={catSummary.category} className="legend-chip">
+                          <span
+                            className="legend-color-dot"
+                            style={{ backgroundColor: matchedCat.color }}
+                          ></span>
+                          <span className="legend-cat-name">
+                            {matchedCat.emoji} {catSummary.category}
+                          </span>
+                          <span className="legend-cat-amt">
+                            {formatMoney(catSummary.totalAmount, activeCurrencyCode)}
+                          </span>
+                          {catSummary.percentage !== undefined && (
+                            <span className="legend-cat-pct">{catSummary.percentage}%</span>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Budget Categories vs Real Expenses Comparison */}
+            <div className="analytics-card budget-vs-actual-card">
+              <div className="analytics-card-header">
+                <div className="analytics-title-wrap">
+                  <Coins size={18} className="analytics-icon" />
+                  <div>
+                    <h3 className="analytics-title">Category Allocations & Burn</h3>
+                    <span className="analytics-sub">Planned target vs logged expense</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="category-burn-list">
+                {FIXED_EXPENSE_CATEGORIES.map((fc) => {
+                  // Find planned amount from budget
+                  let planned = 0;
+                  if (budget) {
+                    if (fc.id === 'Hotel') planned = parseFloat(budget.accommodationBudget) || 0;
+                    if (fc.id === 'Food') planned = parseFloat(budget.foodBudget) || 0;
+                    if (fc.id === 'Transportation') planned = parseFloat(budget.transportationBudget) || 0;
+                    if (fc.id === 'Entertainment') planned = parseFloat(budget.activitiesBudget) || 0;
+                    if (fc.id === 'Miscellaneous') planned = parseFloat(budget.emergencyBudget) || 0;
+                  }
+
+                  // Find actual spent
+                  const actualObj = categorySummaries.find(
+                    (cs) => cs.category.toLowerCase() === fc.id.toLowerCase()
+                  );
+                  const actual = actualObj ? parseFloat(actualObj.totalAmount) : 0;
+                  const ratio = planned > 0 ? Math.min(Math.round((actual / planned) * 100), 100) : (actual > 0 ? 100 : 0);
+
+                  const IconComp = fc.icon;
+
+                  return (
+                    <div key={fc.id} className="category-burn-row">
+                      <div className="burn-row-header">
+                        <div className="burn-cat-title">
+                          <span className="burn-cat-icon" style={{ color: fc.color }}>
+                            <IconComp size={15} />
+                          </span>
+                          <span className="burn-cat-text">{fc.label}</span>
+                        </div>
+                        <div className="burn-numbers">
+                          <span className="burn-spent-num">{formatMoney(actual, activeCurrencyCode)}</span>
+                          {planned > 0 && (
+                            <span className="burn-planned-num">/ {formatMoney(planned, activeCurrencyCode)}</span>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="burn-progress-track">
+                        <div
+                          className="burn-progress-fill"
+                          style={{
+                            width: `${ratio}%`,
+                            backgroundColor: ratio > 90 ? '#ef4444' : fc.color,
+                          }}
+                        ></div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
+          {/* ====================================================================
+              TRAVEL EXPENSE JOURNAL & LEDGER
+              ==================================================================== */}
+          <div className="expense-journal-container">
+            <div className="journal-toolbar">
+              <div className="journal-toolbar-left">
+                <h3 className="journal-title">Expense Transactions</h3>
+                <span className="journal-count-badge">
+                  {filteredExpenses.length} {filteredExpenses.length === 1 ? 'record' : 'records'}
+                </span>
+              </div>
+
+              <div className="journal-toolbar-right">
+                {/* Search */}
+                <div className="journal-search-wrap">
+                  <Search size={14} className="search-icon" />
+                  <input
+                    type="text"
+                    placeholder="Search expenses..."
+                    value={expenseSearchQuery}
+                    onChange={(e) => setExpenseSearchQuery(e.target.value)}
+                    className="journal-search-input"
+                  />
+                  {expenseSearchQuery && (
+                    <button
+                      onClick={() => setExpenseSearchQuery('')}
+                      className="search-clear-btn"
+                      aria-label="Clear search"
+                    >
+                      <X size={12} />
+                    </button>
+                  )}
+                </div>
+
+                {/* Add Expense Button */}
+                <button onClick={openAddExpenseModal} className="btn-primary btn-add-expense-sm">
+                  <Plus size={14} />
+                  <span>Log Expense</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Category Filter Pills */}
+            <div className="category-filter-pills" role="tablist" aria-label="Filter expenses by category">
+              <button
+                onClick={() => setExpenseFilterCategory('ALL')}
+                className={`filter-pill ${expenseFilterCategory === 'ALL' ? 'active' : ''}`}
+              >
+                All Categories
               </button>
+              {FIXED_EXPENSE_CATEGORIES.map((cat) => (
+                <button
+                  key={cat.id}
+                  onClick={() => setExpenseFilterCategory(cat.id)}
+                  className={`filter-pill ${expenseFilterCategory === cat.id ? 'active' : ''}`}
+                >
+                  <span>{cat.emoji}</span>
+                  <span>{cat.label}</span>
+                </button>
+              ))}
             </div>
-          ) : (
-            /* Active Budget Showcase */
-            <div className="budget-hub-grid">
-              {/* Top Financial Key Metrics */}
-              <div className="budget-key-metrics-card">
-                <div className="metrics-card-top">
-                  <div className="budget-tag-row">
-                    <span className="currency-pill">
-                      {budget.currency} ({getCurrencySymbol(budget.currency)})
-                    </span>
-                    {budget.category && (
-                      <span className="tier-pill">
-                        <Sparkles size={11} />
-                        {budget.category}
-                      </span>
-                    )}
-                  </div>
-                  <span className="budget-last-updated">
-                    Updated: {new Date(budget.updatedAt || budget.createdAt).toLocaleDateString()}
-                  </span>
-                </div>
 
-                <div className="metrics-figures-row">
-                  <div className="metric-big-box">
-                    <span className="metric-box-label">Total Allocated Budget</span>
-                    <span className="metric-box-value primary-gradient-text">
-                      {formatMoney(budget.totalBudget, budget.currency)}
-                    </span>
-                  </div>
-
-                  <div className="metric-big-box">
-                    <span className="metric-box-label">Scheduled Activities Cost</span>
-                    <span className="metric-box-value text-spent">
-                      {formatMoney(totalSpentCost, budget.currency)}
-                    </span>
-                    <span className="metric-box-sub">
-                      Across {totalActivitiesCount} planned activities
-                    </span>
-                  </div>
-
-                  <div className="metric-big-box">
-                    <span className="metric-box-label">Estimated Remaining Surplus</span>
-                    <span className={`metric-box-value ${remainingBudget >= 0 ? 'text-surplus' : 'text-deficit'}`}>
-                      {formatMoney(Math.abs(remainingBudget), budget.currency)} {remainingBudget < 0 ? 'Over' : 'Left'}
-                    </span>
-                    <span className="metric-box-sub">
-                      {remainingBudget >= 0 ? `${100 - budgetSpentPercentage}% remaining` : 'Exceeds budget'}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Main Progress Meter */}
-                <div className="budget-visual-tracker">
-                  <div className="tracker-labels-row">
-                    <span>Overall Budget Consumption</span>
-                    <span className="tracker-pct">{budgetSpentPercentage}% spent</span>
-                  </div>
-                  <div className="tracker-bar-track">
-                    <div
-                      className={`tracker-bar-fill ${budgetSpentPercentage > 90 ? 'fill-danger' : 'fill-primary'}`}
-                      style={{ width: `${budgetSpentPercentage}%` }}
-                    ></div>
-                  </div>
-                </div>
-
-                {budget.notes && (
-                  <div className="budget-memo-box">
-                    <span className="memo-title">Budget Notes / Strategy:</span>
-                    <p className="memo-text">{budget.notes}</p>
-                  </div>
-                )}
+            {/* Expense Rows List */}
+            {filteredExpenses.length === 0 ? (
+              <div className="journal-empty-state">
+                <Receipt size={40} className="journal-empty-icon" />
+                <h4>No Expenses Found</h4>
+                <p>
+                  {expenseSearchQuery || expenseFilterCategory !== 'ALL'
+                    ? 'No expense matches the selected filter or search query.'
+                    : 'No expenses have been recorded for this trip yet.'}
+                </p>
+                <button onClick={openAddExpenseModal} className="btn-primary mt-3">
+                  <Plus size={15} />
+                  <span>Log an Expense</span>
+                </button>
               </div>
+            ) : (
+              <div className="journal-rows-list">
+                {filteredExpenses.map((exp) => {
+                  const matchedCat = FIXED_EXPENSE_CATEGORIES.find(
+                    (c) => c.id.toLowerCase() === exp.category?.toLowerCase()
+                  ) || { color: '#94a3b8', emoji: '🏷️', icon: Receipt };
+                  const CatIcon = matchedCat.icon;
 
-              {/* Category Allocation Tiles */}
-              <div className="budget-categories-panel">
-                <div className="categories-header-row">
-                  <h3 className="categories-title">Category Allocations & Caps</h3>
-                  <span className="allocated-sum-tag">
-                    Allocated: {formatMoney(totalAllocatedVal, budget.currency)} / {formatMoney(budget.totalBudget, budget.currency)}
-                  </span>
-                </div>
+                  return (
+                    <div key={exp.id} className="expense-journal-row">
+                      <div className="expense-category-avatar" style={{ backgroundColor: `${matchedCat.color}20`, color: matchedCat.color }}>
+                        <CatIcon size={18} />
+                      </div>
 
-                <div className="category-tiles-grid">
-                  {/* Accommodation */}
-                  <div className="category-tile stay-tile">
-                    <div className="tile-icon-wrap stay-icon">
-                      <Building2 size={18} />
-                    </div>
-                    <div className="tile-body">
-                      <span className="tile-name">Accommodation</span>
-                      <span className="tile-amount">{formatMoney(accommodationVal, budget.currency)}</span>
-                      <span className="tile-sub">
-                        {budget.totalBudget > 0 ? `${Math.round((accommodationVal / budget.totalBudget) * 100)}% of total` : '—'}
-                      </span>
-                    </div>
-                  </div>
+                      <div className="expense-main-info">
+                        <div className="expense-title-line">
+                          <h4 className="expense-name">{exp.title}</h4>
+                          <span className="expense-cat-badge" style={{ borderColor: `${matchedCat.color}40`, color: matchedCat.color }}>
+                            {matchedCat.emoji} {exp.category}
+                          </span>
+                        </div>
+                        {exp.description && (
+                          <p className="expense-description-text">{exp.description}</p>
+                        )}
+                        <div className="expense-meta-line">
+                          <span className="expense-date-stamp">
+                            <Calendar size={12} />
+                            <span>{exp.expenseDate}</span>
+                          </span>
+                          <span className="expense-payer-stamp">
+                            <span>Paid by:</span>
+                            <strong>{exp.payerName || 'Traveler'}</strong>
+                          </span>
+                          {exp.receiptUrl && (
+                            <a
+                              href={exp.receiptUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="expense-receipt-link"
+                              title="Open receipt in new tab"
+                            >
+                              <ExternalLink size={12} />
+                              <span>View Receipt</span>
+                            </a>
+                          )}
+                        </div>
+                      </div>
 
-                  {/* Food & Dining */}
-                  <div className="category-tile food-tile">
-                    <div className="tile-icon-wrap food-icon">
-                      <Utensils size={18} />
-                    </div>
-                    <div className="tile-body">
-                      <span className="tile-name">Food & Dining</span>
-                      <span className="tile-amount">{formatMoney(foodVal, budget.currency)}</span>
-                      <span className="tile-sub">
-                        {budget.totalBudget > 0 ? `${Math.round((foodVal / budget.totalBudget) * 100)}% of total` : '—'}
-                      </span>
-                    </div>
-                  </div>
+                      <div className="expense-amount-actions">
+                        <div className="expense-price-block">
+                          <span className="expense-price-val">
+                            {formatMoney(exp.amount, activeCurrencyCode)}
+                          </span>
+                        </div>
 
-                  {/* Transportation */}
-                  <div className="category-tile transit-tile">
-                    <div className="tile-icon-wrap transit-icon">
-                      <Plane size={18} />
+                        <div className="expense-actions-wrap">
+                          <button
+                            onClick={() => openEditExpenseModal(exp)}
+                            className="btn-icon-action btn-edit-expense"
+                            title="Edit Expense"
+                            aria-label="Edit Expense"
+                          >
+                            <Edit2 size={14} />
+                          </button>
+                          <button
+                            onClick={() => handleDeleteExpense(exp.id, exp.title)}
+                            className="btn-icon-action btn-delete-expense"
+                            title="Delete Expense"
+                            aria-label="Delete Expense"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      </div>
                     </div>
-                    <div className="tile-body">
-                      <span className="tile-name">Transit & Flights</span>
-                      <span className="tile-amount">{formatMoney(transitVal, budget.currency)}</span>
-                      <span className="tile-sub">
-                        {budget.totalBudget > 0 ? `${Math.round((transitVal / budget.totalBudget) * 100)}% of total` : '—'}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Activities */}
-                  <div className="category-tile acts-tile">
-                    <div className="tile-icon-wrap acts-icon">
-                      <Ticket size={18} />
-                    </div>
-                    <div className="tile-body">
-                      <span className="tile-name">Activities & Tours</span>
-                      <span className="tile-amount">{formatMoney(activitiesVal, budget.currency)}</span>
-                      <span className="tile-sub">
-                        Actual Scheduled: {formatMoney(totalSpentCost, budget.currency)}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Emergency Buffer */}
-                  <div className="category-tile buffer-tile">
-                    <div className="tile-icon-wrap buffer-icon">
-                      <ShieldCheck size={18} />
-                    </div>
-                    <div className="tile-body">
-                      <span className="tile-name">Emergency Buffer</span>
-                      <span className="tile-amount">{formatMoney(emergencyVal, budget.currency)}</span>
-                      <span className="tile-sub">
-                        {budget.totalBudget > 0 ? `${Math.round((emergencyVal / budget.totalBudget) * 100)}% of total` : '—'}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Unallocated Contingency */}
-                  <div className="category-tile unallocated-tile">
-                    <div className="tile-icon-wrap unalloc-icon">
-                      <Percent size={18} />
-                    </div>
-                    <div className="tile-body">
-                      <span className="tile-name">Unallocated Surplus</span>
-                      <span className="tile-amount">{formatMoney(unallocatedVal, budget.currency)}</span>
-                      <span className="tile-sub">Flexible Reserve</span>
-                    </div>
-                  </div>
-                </div>
+                  );
+                })}
               </div>
-            </div>
-          )}
+            )}
+          </div>
         </section>
       )}
 
@@ -859,7 +1379,7 @@ const TripDetailsPage = () => {
                         {dayCost > 0 && (
                           <span className="day-cost-subtotal">
                             <Receipt size={13} />
-                            <span>{formatMoney(dayCost, activeCurrency)}</span>
+                            <span>{formatMoney(dayCost, activeCurrencyCode)}</span>
                           </span>
                         )}
                         <button
@@ -908,27 +1428,25 @@ const TripDetailsPage = () => {
                                   <h4 className="act-title">{act.title}</h4>
                                   {act.cost && (
                                     <span className="act-cost-badge">
-                                      <span>{formatMoney(act.cost, activeCurrency)}</span>
+                                      {formatMoney(act.cost, activeCurrencyCode)}
                                     </span>
                                   )}
                                 </div>
-
                                 {act.location && (
                                   <div className="act-location-row">
-                                    <MapPin size={12} className="loc-pin" />
+                                    <MapPin size={12} />
                                     <span>{act.location}</span>
                                   </div>
                                 )}
-
                                 {act.description && (
-                                  <p className="act-description-text">{act.description}</p>
+                                  <p className="act-desc-text">{act.description}</p>
                                 )}
                               </div>
 
                               <div className="act-actions-col">
                                 <button
                                   onClick={() => openEditActivityModal(day.id, act)}
-                                  className="btn-act-btn"
+                                  className="btn-act-icon"
                                   title="Edit Activity"
                                   aria-label="Edit Activity"
                                 >
@@ -936,7 +1454,7 @@ const TripDetailsPage = () => {
                                 </button>
                                 <button
                                   onClick={() => handleDeleteActivity(act.id, act.title)}
-                                  className="btn-act-btn btn-act-btn-delete"
+                                  className="btn-act-icon delete-act"
                                   title="Delete Activity"
                                   aria-label="Delete Activity"
                                 >
@@ -957,7 +1475,156 @@ const TripDetailsPage = () => {
       )}
 
       {/* ====================================================================
-          3. BUDGET MANAGEMENT MODAL (Create & Edit)
+          MODAL 1: ADD / EDIT EXPENSE MODAL
+          ==================================================================== */}
+      {isExpenseModalOpen && (
+        <div
+          className="modal-backdrop"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setIsExpenseModalOpen(false);
+          }}
+        >
+          <div
+            className="modal-container modal-expense-container"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="expense-modal-title"
+          >
+            <div className="modal-header">
+              <div className="modal-title-with-icon">
+                <Receipt size={20} className="modal-header-icon" />
+                <h2 id="expense-modal-title">
+                  {editingExpenseId ? 'Edit Travel Expense' : 'Log New Travel Expense'}
+                </h2>
+              </div>
+              <button
+                onClick={() => setIsExpenseModalOpen(false)}
+                className="btn-close-modal"
+                aria-label="Close dialog"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {modalError && (
+              <div className="alert-box alert-error mb-3">
+                <AlertCircle size={16} />
+                <span>{modalError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleExpenseSubmit} className="modal-form">
+              {/* Category selector */}
+              <div className="form-group">
+                <label htmlFor="expCategory">Expense Category *</label>
+                <select
+                  id="expCategory"
+                  value={expenseFormData.category}
+                  onChange={(e) => setExpenseFormData({ ...expenseFormData, category: e.target.value })}
+                  className="form-input form-select"
+                  required
+                >
+                  {FIXED_EXPENSE_CATEGORIES.map((cat) => (
+                    <option key={cat.id} value={cat.id}>
+                      {cat.emoji} {cat.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Title */}
+              <div className="form-group">
+                <label htmlFor="expTitle">Expense Name / Title *</label>
+                <input
+                  id="expTitle"
+                  type="text"
+                  placeholder="e.g. Bullet Train ticket, Dinner at Bistro, Louvre admission..."
+                  value={expenseFormData.title}
+                  onChange={(e) => setExpenseFormData({ ...expenseFormData, title: e.target.value })}
+                  required
+                  className="form-input"
+                />
+              </div>
+
+              {/* Amount & Date row */}
+              <div className="form-row">
+                <div className="form-group half-width">
+                  <label htmlFor="expAmount">Amount ({getCurrencySymbol(activeCurrencyCode)}) *</label>
+                  <input
+                    id="expAmount"
+                    type="number"
+                    step="0.01"
+                    min="0.01"
+                    placeholder="e.g. 85.50"
+                    value={expenseFormData.amount}
+                    onChange={(e) => setExpenseFormData({ ...expenseFormData, amount: e.target.value })}
+                    required
+                    className="form-input"
+                  />
+                </div>
+
+                <div className="form-group half-width">
+                  <label htmlFor="expDate">Expense Date *</label>
+                  <input
+                    id="expDate"
+                    type="date"
+                    value={expenseFormData.expenseDate}
+                    onChange={(e) => setExpenseFormData({ ...expenseFormData, expenseDate: e.target.value })}
+                    required
+                    className="form-input"
+                  />
+                </div>
+              </div>
+
+              {/* Receipt URL */}
+              <div className="form-group">
+                <label htmlFor="expReceipt">Receipt Link / URL (Optional)</label>
+                <input
+                  id="expReceipt"
+                  type="url"
+                  placeholder="https://example.com/receipts/booking.pdf or image link"
+                  value={expenseFormData.receiptUrl}
+                  onChange={(e) => setExpenseFormData({ ...expenseFormData, receiptUrl: e.target.value })}
+                  className="form-input"
+                />
+              </div>
+
+              {/* Description / Notes */}
+              <div className="form-group">
+                <label htmlFor="expDesc">Description / Notes</label>
+                <textarea
+                  id="expDesc"
+                  rows={2}
+                  placeholder="Additional details, splitting notes, payment method..."
+                  value={expenseFormData.description}
+                  onChange={(e) => setExpenseFormData({ ...expenseFormData, description: e.target.value })}
+                  className="form-input form-textarea"
+                />
+              </div>
+
+              <div className="modal-actions">
+                <button
+                  type="button"
+                  onClick={() => setIsExpenseModalOpen(false)}
+                  className="btn-secondary"
+                >
+                  Cancel
+                </button>
+                <button type="submit" disabled={expenseModalLoading} className="btn-primary">
+                  {expenseModalLoading
+                    ? 'Saving...'
+                    : editingExpenseId
+                    ? 'Update Expense'
+                    : 'Save & Log Expense'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ====================================================================
+          MODAL 2: CREATE / EDIT BUDGET PLAN MODAL
           ==================================================================== */}
       {isBudgetModalOpen && (
         <div
@@ -967,24 +1634,17 @@ const TripDetailsPage = () => {
           }}
         >
           <div
-            className="modal-container modal-container-lg"
+            className="modal-container modal-budget-container"
             role="dialog"
             aria-modal="true"
             aria-labelledby="budget-modal-title"
           >
             <div className="modal-header">
-              <div className="modal-header-icon-title">
-                <div className="modal-title-icon-wrap">
-                  <Wallet size={20} />
-                </div>
-                <div>
-                  <h2 id="budget-modal-title">
-                    {budget ? 'Edit Trip Budget & Financial Allocations' : 'Set Up Trip Budget Plan'}
-                  </h2>
-                  <span className="modal-subtitle">
-                    Configure your total spend, currency, and category limits for {trip.title}.
-                  </span>
-                </div>
+              <div className="modal-title-with-icon">
+                <Wallet size={20} className="modal-header-icon" />
+                <h2 id="budget-modal-title">
+                  {budget ? 'Configure Trip Budget Plan' : 'Initialize Trip Budget Plan'}
+                </h2>
               </div>
               <button
                 onClick={() => setIsBudgetModalOpen(false)}
@@ -1003,26 +1663,21 @@ const TripDetailsPage = () => {
             )}
 
             <form onSubmit={handleBudgetSubmit} className="modal-form">
-              {/* Primary Budget Row */}
+              {/* Primary Budget Inputs */}
               <div className="form-row">
                 <div className="form-group half-width">
-                  <label htmlFor="totalBudget">Total Trip Budget *</label>
-                  <div className="input-with-icon">
-                    <span className="field-prefix-symbol">
-                      {getCurrencySymbol(budgetFormData.currency)}
-                    </span>
-                    <input
-                      id="totalBudget"
-                      type="number"
-                      step="0.01"
-                      min="1"
-                      placeholder="e.g. 2500"
-                      value={budgetFormData.totalBudget}
-                      onChange={(e) => setBudgetFormData({ ...budgetFormData, totalBudget: e.target.value })}
-                      required
-                      className="form-input with-left-prefix"
-                    />
-                  </div>
+                  <label htmlFor="totalBudget">Total Budget Target *</label>
+                  <input
+                    id="totalBudget"
+                    type="number"
+                    step="0.01"
+                    min="1"
+                    placeholder="e.g. 3500"
+                    value={budgetFormData.totalBudget}
+                    onChange={(e) => setBudgetFormData({ ...budgetFormData, totalBudget: e.target.value })}
+                    required
+                    className="form-input"
+                  />
                 </div>
 
                 <div className="form-group half-width">
@@ -1031,7 +1686,6 @@ const TripDetailsPage = () => {
                     id="budgetCurrency"
                     value={budgetFormData.currency}
                     onChange={(e) => setBudgetFormData({ ...budgetFormData, currency: e.target.value })}
-                    required
                     className="form-input form-select"
                   >
                     {CURRENCIES.map((c) => (
@@ -1043,64 +1697,60 @@ const TripDetailsPage = () => {
                 </div>
               </div>
 
-              {/* Category Tier Selector */}
               <div className="form-group">
-                <label htmlFor="budgetTier">Travel Budget Style / Tier</label>
+                <label htmlFor="travelTier">Travel Style / Tier</label>
                 <select
-                  id="budgetTier"
+                  id="travelTier"
                   value={budgetFormData.category}
                   onChange={(e) => setBudgetFormData({ ...budgetFormData, category: e.target.value })}
                   className="form-input form-select"
                 >
-                  {BUDGET_TIERS.map((tier) => (
-                    <option key={tier} value={tier}>
-                      {tier}
+                  {BUDGET_TIERS.map((t) => (
+                    <option key={t} value={t}>
+                      {t}
                     </option>
                   ))}
                 </select>
               </div>
 
-              {/* Quick Split Helper */}
-              <div className="quick-split-helper-section">
-                <span className="helper-label">
-                  <Percent size={13} />
-                  <span>Smart Allocation Presets (Auto-fills category values):</span>
-                </span>
+              {/* Quick Split Presets */}
+              <div className="quick-split-section">
+                <span className="quick-split-label">⚡ 1-Click Smart Split Presets:</span>
                 <div className="quick-split-buttons">
                   <button
                     type="button"
-                    className="btn-preset-split"
                     onClick={() => applyQuickSplit({ stay: 0.35, food: 0.25, transit: 0.20, acts: 0.15, buffer: 0.05 })}
+                    className="btn-quick-split"
                   >
-                    Standard (35% Stay / 25% Food / 20% Travel / 15% Acts / 5% Buffer)
+                    🏖️ Balanced
                   </button>
                   <button
                     type="button"
-                    className="btn-preset-split"
-                    onClick={() => applyQuickSplit({ stay: 0.45, food: 0.25, transit: 0.15, acts: 0.10, buffer: 0.05 })}
+                    onClick={() => applyQuickSplit({ stay: 0.25, food: 0.20, transit: 0.25, acts: 0.20, buffer: 0.10 })}
+                    className="btn-quick-split"
                   >
-                    Resort / Luxury Focus (45% Stay)
+                    🎒 Backpacker
                   </button>
                   <button
                     type="button"
-                    className="btn-preset-split"
-                    onClick={() => applyQuickSplit({ stay: 0.25, food: 0.30, transit: 0.20, acts: 0.20, buffer: 0.05 })}
+                    onClick={() => applyQuickSplit({ stay: 0.45, food: 0.30, transit: 0.15, acts: 0.05, buffer: 0.05 })}
+                    className="btn-quick-split"
                   >
-                    Explorer & Foodie (30% Food / 20% Acts)
+                    ✨ Luxury
                   </button>
                 </div>
               </div>
 
-              {/* Category Inputs Grid */}
-              <div className="modal-category-inputs-grid">
+              {/* Category Breakdown Inputs */}
+              <div className="breakdown-grid">
                 <div className="form-group">
-                  <label htmlFor="stayBudget">🏨 Stay & Lodging</label>
+                  <label htmlFor="stayBudget">🏨 Hotel / Stay</label>
                   <input
                     id="stayBudget"
                     type="number"
                     step="0.01"
                     min="0"
-                    placeholder="e.g. 800"
+                    placeholder="e.g. 1200"
                     value={budgetFormData.accommodationBudget}
                     onChange={(e) => setBudgetFormData({ ...budgetFormData, accommodationBudget: e.target.value })}
                     className="form-input"
@@ -1108,13 +1758,13 @@ const TripDetailsPage = () => {
                 </div>
 
                 <div className="form-group">
-                  <label htmlFor="foodBudget">🍽️ Food & Dining</label>
+                  <label htmlFor="foodBudget">🍜 Food & Dining</label>
                   <input
                     id="foodBudget"
                     type="number"
                     step="0.01"
                     min="0"
-                    placeholder="e.g. 500"
+                    placeholder="e.g. 800"
                     value={budgetFormData.foodBudget}
                     onChange={(e) => setBudgetFormData({ ...budgetFormData, foodBudget: e.target.value })}
                     className="form-input"
@@ -1128,7 +1778,7 @@ const TripDetailsPage = () => {
                     type="number"
                     step="0.01"
                     min="0"
-                    placeholder="e.g. 400"
+                    placeholder="e.g. 600"
                     value={budgetFormData.transportationBudget}
                     onChange={(e) => setBudgetFormData({ ...budgetFormData, transportationBudget: e.target.value })}
                     className="form-input"
@@ -1136,13 +1786,13 @@ const TripDetailsPage = () => {
                 </div>
 
                 <div className="form-group">
-                  <label htmlFor="actsBudget">🎟️ Tours & Activities</label>
+                  <label htmlFor="actsBudget">🎟️ Entertainment & Tours</label>
                   <input
                     id="actsBudget"
                     type="number"
                     step="0.01"
                     min="0"
-                    placeholder="e.g. 350"
+                    placeholder="e.g. 400"
                     value={budgetFormData.activitiesBudget}
                     onChange={(e) => setBudgetFormData({ ...budgetFormData, activitiesBudget: e.target.value })}
                     className="form-input"
@@ -1166,11 +1816,11 @@ const TripDetailsPage = () => {
 
               {/* Notes */}
               <div className="form-group">
-                <label htmlFor="budgetNotes">Financial Notes / Currency Strategy</label>
+                <label htmlFor="budgetNotes">Financial Strategy / Currency Notes</label>
                 <textarea
                   id="budgetNotes"
                   rows={2}
-                  placeholder="e.g. Bring local cash for street markets, use travel credit card for hotels..."
+                  placeholder="e.g. Local cash for street markets, travel card with 0% foreign FX fee..."
                   value={budgetFormData.notes}
                   onChange={(e) => setBudgetFormData({ ...budgetFormData, notes: e.target.value })}
                   className="form-input form-textarea"
@@ -1187,7 +1837,7 @@ const TripDetailsPage = () => {
                 </button>
                 <button type="submit" disabled={budgetModalLoading} className="btn-primary">
                   {budgetModalLoading
-                    ? 'Saving Budget...'
+                    ? 'Saving...'
                     : budget
                     ? 'Save Changes'
                     : 'Save & Initialize Budget'}
@@ -1198,7 +1848,9 @@ const TripDetailsPage = () => {
         </div>
       )}
 
-      {/* Add Day Modal */}
+      {/* ====================================================================
+          MODAL 3: ADD ITINERARY DAY
+          ==================================================================== */}
       {isDayModalOpen && (
         <div
           className="modal-backdrop"
@@ -1280,7 +1932,9 @@ const TripDetailsPage = () => {
         </div>
       )}
 
-      {/* Add / Edit Activity Modal */}
+      {/* ====================================================================
+          MODAL 4: ADD / EDIT ACTIVITY
+          ==================================================================== */}
       {isActivityModalOpen && (
         <div
           className="modal-backdrop"
@@ -1341,7 +1995,7 @@ const TripDetailsPage = () => {
                   />
                 </div>
                 <div className="form-group half-width">
-                  <label htmlFor="actCost">Estimated Cost ({activeCurrency})</label>
+                  <label htmlFor="actCost">Estimated Cost ({activeCurrencyCode})</label>
                   <input
                     id="actCost"
                     type="number"

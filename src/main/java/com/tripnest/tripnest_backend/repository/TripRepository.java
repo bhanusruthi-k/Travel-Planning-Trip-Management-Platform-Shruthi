@@ -27,4 +27,9 @@ public interface TripRepository extends JpaRepository<Trip, Long> {
 
     @Query("SELECT t FROM Trip t LEFT JOIN FETCH t.destination LEFT JOIN FETCH t.user WHERE t.id = :id")
     Optional<Trip> findByIdWithDetails(@Param("id") Long id);
+
+    @Query("SELECT DISTINCT t FROM Trip t LEFT JOIN FETCH t.destination LEFT JOIN FETCH t.user " +
+           "WHERE t.user.id = :userId OR t.id IN (SELECT tm.trip.id FROM TripMembership tm WHERE tm.user.id = :userId) " +
+           "ORDER BY t.startDate DESC")
+    List<Trip> findAllAccessibleByUserId(@Param("userId") Long userId);
 }

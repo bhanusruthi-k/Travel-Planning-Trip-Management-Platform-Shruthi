@@ -1,25 +1,35 @@
-import React, { useState, useEffect } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import React, { useState, useEffect, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { destinationApi } from '../api/destinationApi';
 import { useAuth } from '../context/AuthContext';
+import { getDestinationPhotos } from '../utils/destinationGalleries';
+import GalleryModal from '../components/GalleryModal';
 import {
   MapPin,
   Search,
-  Calendar,
   Compass,
-  Info,
-  Sparkles,
-  Flame,
-  Star,
-  ChevronRight,
+  Camera,
+  Globe2,
+  X,
+  Plus,
+  DollarSign,
+  Images,
 } from 'lucide-react';
 
 const DestinationsPage = () => {
   const [destinations, setDestinations] = useState([]);
-  const [popularDestinations, setPopularDestinations] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
   const [search, setSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('ALL');
+
+  // Photo Gallery Lightbox state
+  const [galleryModalState, setGalleryModalState] = useState({
+    isOpen: false,
+    destination: null,
+    initialIndex: 0,
+    photos: [],
+  });
 
   const { isAuthenticated } = useAuth();
   const navigate = useNavigate();
@@ -27,15 +37,13 @@ const DestinationsPage = () => {
   useEffect(() => {
     const fetchData = async () => {
       setLoading(true);
+      setError('');
       try {
-        const [allDest, popular] = await Promise.all([
-          destinationApi.getDestinations(),
-          destinationApi.getPopularDestinations().catch(() => []),
-        ]);
-        setDestinations(allDest);
-        setPopularDestinations(popular);
+        const allDest = await destinationApi.getDestinations();
+        setDestinations(allDest || []);
       } catch (err) {
         console.error('Failed to load destinations:', err);
+        setError('Unable to load destinations. Please check backend connection.');
       } finally {
         setLoading(false);
       }
@@ -43,19 +51,26 @@ const DestinationsPage = () => {
     fetchData();
   }, []);
 
-  const categories = ['ALL', ...new Set(destinations.map((d) => d.category).filter(Boolean))];
+  const categories = useMemo(() => {
+    return ['ALL', ...new Set(destinations.map((d) => d.category).filter(Boolean))];
+  }, [destinations]);
 
-  const filteredDestinations = destinations.filter((dest) => {
-    const matchesSearch =
-      dest.name.toLowerCase().includes(search.toLowerCase()) ||
-      dest.country.toLowerCase().includes(search.toLowerCase()) ||
-      (dest.description && dest.description.toLowerCase().includes(search.toLowerCase()));
+  const filteredDestinations = useMemo(() => {
+    return destinations.filter((dest) => {
+      const q = search.trim().toLowerCase();
+      const matchesSearch =
+        !q ||
+        dest.name?.toLowerCase().includes(q) ||
+        dest.country?.toLowerCase().includes(q) ||
+        (dest.description && dest.description.toLowerCase().includes(q)) ||
+        (dest.category && dest.category.toLowerCase().includes(q));
 
-    const matchesCategory =
-      selectedCategory === 'ALL' || dest.category === selectedCategory;
+      const matchesCategory =
+        selectedCategory === 'ALL' || dest.category === selectedCategory;
 
-    return matchesSearch && matchesCategory;
-  });
+      return matchesSearch && matchesCategory;
+    });
+  }, [destinations, search, selectedCategory]);
 
   const handlePlanTrip = (e, destId) => {
     e.stopPropagation();
@@ -66,253 +81,248 @@ const DestinationsPage = () => {
     }
   };
 
+  const handleOpenGallery = (e, dest, index = 0) => {
+    if (e) e.stopPropagation();
+    const photos = getDestinationPhotos(dest);
+    setGalleryModalState({
+      isOpen: true,
+      destination: dest,
+      initialIndex: index,
+      photos,
+    });
+  };
+
+  const handleCloseGallery = () => {
+    setGalleryModalState((prev) => ({ ...prev, isOpen: false }));
+  };
+
   return (
-    <div className="page-container">
-      {/* Hero Welcome Banner */}
-      <section className="dest-hero-banner">
-        <div className="dest-hero-badge">
-          <Sparkles size={14} />
-          <span>Curated Travel Inspiration</span>
-        </div>
-        <h1 className="dest-hero-title">Discover Your Next Adventure</h1>
-        <p className="dest-hero-subtitle">
-          Explore world-class destinations, check live weather, discover top attractions, and plan unforgettable itineraries with TripNest.
-        </p>
+    <div className="destinations-workspace-container">
+      {/* 1. COMPACT DISCOVERY & SEARCH HEADER */}
+      <section className="discovery-top-bar">
+        <div className="discovery-header-row">
+          <div className="discovery-title-area">
+            <h1 className="page-main-heading">EXPLORE DESTINATIONS</h1>
+            <p className="page-sub-heading">
+              Find a place for your next trip.
+            </p>
+          </div>
 
-        <div className="dest-hero-search-wrapper">
-          <div className="search-input-wrapper">
-            <Search className="search-icon" size={20} />
-            <input
-              type="text"
-              placeholder="Search by city, country, or landmark (e.g. Paris, Tokyo, Bali)..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="search-input"
-            />
-            {search && (
-              <button
-                className="search-clear-btn"
-                onClick={() => setSearch('')}
-                aria-label="Clear search"
-              >
-                ×
-              </button>
-            )}
+          <div className="discovery-stats-badge">
+            <Globe2 size={15} />
+            <span>{destinations.length} Curated Locations</span>
           </div>
         </div>
-      </section>
 
-      {/* Popular Destinations Spotlight (Shown when no search filter is active) */}
-      {!search && selectedCategory === 'ALL' && popularDestinations.length > 0 && (
-        <section className="popular-section">
-          <div className="section-header-row">
-            <div className="section-header-titles">
-              <div className="popular-tag">
-                <Flame size={15} />
-                <span>Trending Now</span>
-              </div>
-              <h2 className="section-main-title">Popular Destinations</h2>
-              <p className="section-subtitle">
-                Most loved getaways chosen by thousands of travelers worldwide
-              </p>
+        {/* Integrated Search & Filter Controls */}
+        <div className="search-filter-command-bar">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+            }}
+            className="search-input-form"
+          >
+            <div className="search-input-wrapper">
+              <Search className="search-icon-fixed" size={18} />
+              <input
+                type="text"
+                placeholder="Search destinations (e.g. Paris, Tokyo, Bali, Beach)..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="search-field-input"
+                aria-label="Search destinations"
+              />
+              {search && (
+                <button
+                  type="button"
+                  className="search-clear-btn"
+                  onClick={() => setSearch('')}
+                  aria-label="Clear search"
+                >
+                  <X size={15} />
+                </button>
+              )}
             </div>
-          </div>
+            <button type="submit" className="btn-search-submit">
+              <Search size={15} />
+              <span>Search</span>
+            </button>
+          </form>
 
-          <div className="popular-grid">
-            {popularDestinations.slice(0, 3).map((dest, idx) => (
-              <div
-                key={dest.id}
-                className={`popular-card ${idx === 0 ? 'popular-card-featured' : ''}`}
-                onClick={() => navigate(`/destinations/${dest.id}`)}
-              >
-                <div className="popular-card-img-wrap">
-                  <img
-                    src={
-                      dest.imageUrl ||
-                      'https://images.unsplash.com/photo-1488646953014-85cb44e25828?auto=format&fit=crop&w=800&q=80'
-                    }
-                    alt={dest.name}
-                    className="popular-card-img"
-                    loading="lazy"
-                  />
-                  <div className="popular-card-overlay">
-                    <span className="popular-badge">
-                      <Star size={12} fill="#ffffff" />
-                      <span>Top Choice</span>
-                    </span>
-                    {dest.category && (
-                      <span className="category-pill-glass">{dest.category}</span>
-                    )}
-                  </div>
-                </div>
-
-                <div className="popular-card-content">
-                  <div className="popular-dest-header">
-                    <div>
-                      <h3 className="popular-dest-name">{dest.name}</h3>
-                      <div className="dest-location-tag">
-                        <MapPin size={13} />
-                        <span>{dest.country}</span>
-                      </div>
-                    </div>
-                    {dest.averageCost && (
-                      <div className="popular-cost-box">
-                        <span className="cost-caption">Avg. Cost</span>
-                        <span className="cost-num">${Math.round(dest.averageCost).toLocaleString()}</span>
-                      </div>
-                    )}
-                  </div>
-
-                  <p className="popular-dest-desc">{dest.description}</p>
-
-                  <div className="popular-actions-row">
-                    <Link
-                      to={`/destinations/${dest.id}`}
-                      onClick={(e) => e.stopPropagation()}
-                      className="btn-details-link"
-                    >
-                      <span>Explore details</span>
-                      <ChevronRight size={15} />
-                    </Link>
-                    <button
-                      onClick={(e) => handlePlanTrip(e, dest.id)}
-                      className="btn-primary btn-sm"
-                    >
-                      <Calendar size={14} />
-                      <span>Plan Trip</span>
-                    </button>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
-
-      {/* Main Destinations Section */}
-      <section className="all-destinations-section">
-        <div className="destinations-toolbar">
-          <div className="toolbar-left">
-            <h2 className="section-main-title">
-              {search || selectedCategory !== 'ALL' ? 'Search Results' : 'All Destinations'}
-            </h2>
-            <span className="count-tag">{filteredDestinations.length} available</span>
-          </div>
-
-          <div className="category-chips" role="tablist" aria-label="Category Filter">
+          <div className="category-pill-group" role="tablist" aria-label="Destination Categories">
             {categories.map((cat) => (
               <button
                 key={cat}
                 type="button"
+                className={`category-filter-btn ${selectedCategory === cat ? 'active' : ''}`}
+                onClick={() => setSelectedCategory(cat)}
                 role="tab"
                 aria-selected={selectedCategory === cat}
-                onClick={() => setSelectedCategory(cat)}
-                className={`chip ${selectedCategory === cat ? 'active' : ''}`}
               >
-                {cat === 'ALL' ? 'All Destinations' : cat}
+                {cat === 'ALL' ? 'All Places' : cat}
               </button>
             ))}
           </div>
         </div>
+      </section>
 
-        {loading ? (
-          <div className="loading-state">
-            <div className="spinner"></div>
-            <p>Loading destination guides...</p>
+      {/* 2. LOADING STATE */}
+      {loading ? (
+        <div className="loading-grid-skeleton">
+          <div className="destinations-uniform-grid">
+            {Array.from({ length: 8 }).map((_, i) => (
+              <div key={i} className="skeleton-card" style={{ height: '360px' }}></div>
+            ))}
           </div>
-        ) : filteredDestinations.length === 0 ? (
-          <div className="empty-state">
-            <Compass size={44} className="empty-icon" />
-            <h3>No destinations found</h3>
-            <p>
-              We couldn't find any destination matching "{search}". Try searching for another city, country, or clear your filters.
-            </p>
-            <button
-              onClick={() => {
-                setSearch('');
-                setSelectedCategory('ALL');
-              }}
-              className="btn-secondary mt-3"
-            >
-              Reset Filters
-            </button>
-          </div>
-        ) : (
-          <div className="destinations-grid">
-            {filteredDestinations.map((dest) => (
-              <article
-                key={dest.id}
-                className="destination-card"
-                onClick={() => navigate(`/destinations/${dest.id}`)}
-                style={{ cursor: 'pointer' }}
+        </div>
+      ) : error ? (
+        <div className="empty-results-box">
+          <Compass size={40} className="empty-icon" />
+          <h3>{error}</h3>
+          <p>Please check your backend connection and try again.</p>
+        </div>
+      ) : filteredDestinations.length === 0 ? (
+        <div className="empty-results-box">
+          <Compass size={44} className="empty-icon" />
+          <h3>No destinations matched "{search}"</h3>
+          <p>Try searching for a different city, country, or selecting another category.</p>
+          <button
+            type="button"
+            className="btn-primary-compact"
+            onClick={() => {
+              setSearch('');
+              setSelectedCategory('ALL');
+            }}
+          >
+            View All Destinations
+          </button>
+        </div>
+      ) : (
+        /* 3. SINGLE CONTINUOUS UNIFORM DESTINATIONS GRID */
+        <section className="all-destinations-uniform-section">
+          <div className="section-title-strip">
+            <div>
+              <h2 className="section-title">
+                {search || selectedCategory !== 'ALL'
+                  ? `Destinations (${filteredDestinations.length})`
+                  : `All Destinations (${filteredDestinations.length})`}
+              </h2>
+              <p className="section-subtitle">
+                Explore worldwide destinations. Click any card for details or photo icon to view gallery.
+              </p>
+            </div>
+            {(search || selectedCategory !== 'ALL') && (
+              <button
+                type="button"
+                className="btn-reset-filters"
+                onClick={() => {
+                  setSearch('');
+                  setSelectedCategory('ALL');
+                }}
               >
-                <div className="card-image-container">
-                  <img
-                    src={
-                      dest.imageUrl ||
-                      'https://images.unsplash.com/photo-1488646953014-85cb44e25828?auto=format&fit=crop&w=800&q=80'
-                    }
-                    alt={`${dest.name}, ${dest.country}`}
-                    className="card-image"
-                    loading="lazy"
-                  />
-                  {dest.category && (
-                    <span className="card-category-tag">
-                      {dest.category}
-                    </span>
-                  )}
-                </div>
+                Reset Filters
+              </button>
+            )}
+          </div>
 
-                <div className="card-body">
-                  <div className="card-header-row">
-                    <div>
-                      <h3 className="card-title">
-                        <Link
-                          to={`/destinations/${dest.id}`}
-                          onClick={(e) => e.stopPropagation()}
-                          className="card-title-link"
-                        >
-                          {dest.name}
-                        </Link>
-                      </h3>
-                      <span className="country-badge">
-                        <MapPin size={13} />
-                        {dest.country}
-                      </span>
-                    </div>
-                    {dest.averageCost && (
-                      <div className="cost-info">
-                        <span className="cost-label">Est. Budget</span>
-                        <span className="cost-value">${Math.round(dest.averageCost).toLocaleString()}</span>
-                      </div>
+          <div className="destinations-uniform-grid">
+            {filteredDestinations.map((dest) => {
+              const photos = getDestinationPhotos(dest);
+              return (
+                <div
+                  key={dest.id}
+                  className="destination-product-card"
+                  onClick={() => navigate(`/destinations/${dest.id}`)}
+                >
+                  <div
+                    className="dest-card-image-wrap"
+                    onClick={(e) => handleOpenGallery(e, dest, 0)}
+                    title="Click to view full-screen photo gallery"
+                  >
+                    <img
+                      src={photos[0]?.url || dest.imageUrl || 'https://images.unsplash.com/photo-1488646953014-85cb44e25828?auto=format&fit=crop&w=800&q=80'}
+                      alt={dest.name}
+                      className="dest-card-img"
+                      loading="lazy"
+                      onError={(e) => {
+                        e.target.onerror = null;
+                        e.target.src = 'https://images.unsplash.com/photo-1488646953014-85cb44e25828?auto=format&fit=crop&w=800&q=80';
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className="dest-gallery-trigger-badge"
+                      onClick={(e) => handleOpenGallery(e, dest, 0)}
+                      title="Open photo gallery"
+                      aria-label={`Open photo gallery for ${dest.name}`}
+                    >
+                      <Images size={13} /> {photos.length} Photos
+                    </button>
+
+                    {dest.category && (
+                      <span className="dest-badge-category">{dest.category}</span>
                     )}
                   </div>
 
-                  <p className="card-description">{dest.description}</p>
+                  <div className="dest-card-content">
+                    <div className="dest-card-header">
+                      <h3 className="dest-card-title">{dest.name}</h3>
+                      <span className="dest-card-country">
+                        <MapPin size={13} /> {dest.country}
+                      </span>
+                    </div>
 
-                  <div className="card-footer-row">
-                    <Link
-                      to={`/destinations/${dest.id}`}
-                      onClick={(e) => e.stopPropagation()}
-                      className="btn-card-details"
-                    >
-                      <Info size={14} />
-                      <span>Weather & Sights</span>
-                    </Link>
-                    <button
-                      onClick={(e) => handlePlanTrip(e, dest.id)}
-                      className="btn-plan-trip"
-                    >
-                      <Calendar size={14} />
-                      <span>Plan Trip</span>
-                    </button>
+                    <p className="dest-card-desc">
+                      {dest.description
+                        ? dest.description.slice(0, 95) + (dest.description.length > 95 ? '...' : '')
+                        : 'Explore iconic attractions, culture, and memorable experiences.'}
+                    </p>
+
+                    <div className="dest-card-footer">
+                      <div className="dest-card-meta">
+                        {dest.averageCost != null && (
+                          <span className="meta-cost">
+                            <DollarSign size={13} /> Avg: ₹{Number(dest.averageCost).toLocaleString()}
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="dest-card-actions">
+                        <button
+                          type="button"
+                          className="btn-card-gallery-icon"
+                          onClick={(e) => handleOpenGallery(e, dest, 0)}
+                          title="View Photo Gallery"
+                          aria-label={`View photos of ${dest.name}`}
+                        >
+                          <Camera size={14} />
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-plan-quick"
+                          onClick={(e) => handlePlanTrip(e, dest.id)}
+                          title="Plan a trip to this destination"
+                        >
+                          <Plus size={14} /> Plan Trip
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 </div>
-              </article>
-            ))}
+              );
+            })}
           </div>
-        )}
-      </section>
+        </section>
+      )}
+
+      {/* 4. FULL-SCREEN PHOTO GALLERY LIGHTBOX MODAL */}
+      <GalleryModal
+        isOpen={galleryModalState.isOpen}
+        onClose={handleCloseGallery}
+        destination={galleryModalState.destination}
+        initialIndex={galleryModalState.initialIndex}
+        photos={galleryModalState.photos}
+      />
     </div>
   );
 };

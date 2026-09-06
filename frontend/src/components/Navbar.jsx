@@ -14,7 +14,10 @@ import {
   Moon,
   Menu,
   X,
-  Sparkles,
+  Bell,
+  PlusCircle,
+  Briefcase,
+  Layers,
 } from 'lucide-react';
 
 const Navbar = () => {
@@ -24,10 +27,11 @@ const Navbar = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [showNotifications, setShowNotifications] = useState(false);
 
   const handleLogout = () => {
     logout();
-    showToast('Signed out successfully', 'info');
+    showToast('Signed out of TripNest', 'info');
     navigate('/login');
     setMobileMenuOpen(false);
   };
@@ -43,92 +47,122 @@ const Navbar = () => {
     }
   };
 
-  const isActive = (path) => location.pathname === path;
-
-  const handleThemeToggle = () => {
-    toggleTheme();
-    showToast(`Switched to ${theme === 'light' ? 'Dark' : 'Light'} Mode`, 'info', 1800);
-  };
+  const isActive = (path) => location.pathname === path || location.pathname.startsWith(path + '/');
 
   return (
     <header className="navbar">
       <div className="navbar-container">
-        {/* Brand Logo */}
-        <Link to="/" className="navbar-brand" onClick={() => setMobileMenuOpen(false)}>
-          <div className="brand-icon-wrapper">
-            <Compass className="brand-icon" size={22} />
-          </div>
-          <div className="brand-text">
-            <span className="brand-name">TripNest</span>
-            <span className="brand-tagline">Travel Planner</span>
-          </div>
-        </Link>
-
-        {/* Desktop Navigation Links */}
-        <nav className="navbar-links" aria-label="Main Navigation">
-          <Link
-            to="/destinations"
-            className={`nav-link ${isActive('/destinations') || location.pathname.startsWith('/destinations/') ? 'active' : ''}`}
-          >
-            <MapPin size={16} />
-            <span>Destinations</span>
+        {/* Left: Brand Identity */}
+        <div className="navbar-left">
+          <Link to="/" className="navbar-brand" onClick={() => setMobileMenuOpen(false)}>
+            <div className="brand-icon-box">
+              <Compass size={20} className="brand-compass-icon" />
+            </div>
+            <div className="brand-text-group">
+              <span className="brand-name">TripNest</span>
+              <span className="brand-workspace-tag">Planner</span>
+            </div>
           </Link>
 
-          {isAuthenticated && (
+          {/* Desktop Primary Navigation */}
+          <nav className="navbar-nav-links" aria-label="Main Navigation">
             <Link
-              to="/trips"
-              className={`nav-link ${isActive('/trips') || location.pathname.startsWith('/trips/') ? 'active' : ''}`}
+              to="/destinations"
+              className={`nav-link ${isActive('/destinations') ? 'active' : ''}`}
             >
-              <Calendar size={16} />
-              <span>My Trips</span>
+              <Compass size={16} />
+              <span>Explore</span>
+            </Link>
+
+            {isAuthenticated && (
+              <Link
+                to="/trips"
+                className={`nav-link ${isActive('/trips') ? 'active' : ''}`}
+              >
+                <Briefcase size={16} />
+                <span>My Trips</span>
+              </Link>
+            )}
+          </nav>
+        </div>
+
+        {/* Right: Quick Action Controls & Profile */}
+        <div className="navbar-right">
+          {isAuthenticated && (
+            <Link to="/trips?action=create" className="btn-nav-create">
+              <PlusCircle size={15} />
+              <span>New Trip</span>
             </Link>
           )}
-        </nav>
 
-        {/* Actions & Profile */}
-        <div className="navbar-actions">
           {/* Theme Toggle Button */}
           <button
-            onClick={handleThemeToggle}
-            className="theme-toggle-btn"
-            title={`Switch to ${isDark ? 'Light' : 'Dark'} Mode`}
-            aria-label="Toggle light and dark theme"
+            onClick={toggleTheme}
+            className="navbar-icon-btn"
+            title={`Switch to ${isDark ? 'Light' : 'Dark'} mode`}
+            aria-label="Toggle theme"
           >
-            {isDark ? (
-              <Sun size={18} className="theme-icon sun-icon" />
-            ) : (
-              <Moon size={18} className="theme-icon moon-icon" />
-            )}
-            <span className="theme-label">{isDark ? 'Light' : 'Dark'}</span>
+            {isDark ? <Sun size={17} /> : <Moon size={17} />}
           </button>
 
+          {/* Notifications Trigger */}
+          {isAuthenticated && (
+            <div className="notification-wrapper">
+              <button
+                className="navbar-icon-btn"
+                onClick={() => setShowNotifications(!showNotifications)}
+                title="Notifications"
+                aria-label="Notifications"
+              >
+                <Bell size={17} />
+                <span className="notification-ping"></span>
+              </button>
+
+              {showNotifications && (
+                <div className="notification-dropdown">
+                  <div className="notification-header">
+                    <span className="notification-title">Activity & Alerts</span>
+                    <span className="notification-count">1 new</span>
+                  </div>
+                  <div className="notification-list">
+                    <div className="notification-item unread">
+                      <div className="notification-dot"></div>
+                      <div className="notification-content">
+                        <p className="notification-msg">Welcome to TripNest Planner!</p>
+                        <span className="notification-time">Ready to plan your next journey</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* User Profile or Auth Links */}
           {isAuthenticated ? (
             <div className="user-profile-menu">
-              <div className="user-info">
-                <div className="user-avatar" aria-hidden="true">
-                  {user?.fullName ? user.fullName.charAt(0).toUpperCase() : <User size={15} />}
-                </div>
-                <div className="user-details">
-                  <span className="user-name">{user?.fullName || user?.email?.split('@')[0]}</span>
-                  {user?.role && (
-                    <span className={`role-badge ${getRoleBadgeClass(user?.role)}`}>
-                      {user?.role === 'ADMINISTRATOR' ? <Shield size={10} /> : <Sparkles size={10} />}
-                      {user?.role === 'ADMINISTRATOR' ? 'Admin' : user?.role === 'GROUP_ADMIN' ? 'Leader' : 'Traveler'}
-                    </span>
-                  )}
-                </div>
+              <div className="user-avatar-badge" title={user?.fullName || user?.email}>
+                <span className="avatar-initials">
+                  {(user?.fullName || user?.email || 'U').charAt(0).toUpperCase()}
+                </span>
+              </div>
+              <div className="user-details-compact">
+                <span className="user-display-name">{user?.fullName || user?.email?.split('@')[0]}</span>
+                <span className={`user-role-chip ${getRoleBadgeClass(user?.role)}`}>
+                  {user?.role === 'ADMINISTRATOR' ? 'Admin' : 'Traveler'}
+                </span>
               </div>
               <button
                 onClick={handleLogout}
-                className="btn-logout"
-                title="Sign out of TripNest"
+                className="btn-nav-logout"
+                title="Sign out"
+                aria-label="Sign out"
               >
                 <LogOut size={16} />
-                <span className="logout-text">Logout</span>
               </button>
             </div>
           ) : (
-            <div className="auth-buttons">
+            <div className="auth-nav-buttons">
               <Link to="/login" className="btn-nav-login">
                 Sign In
               </Link>
@@ -138,56 +172,89 @@ const Navbar = () => {
             </div>
           )}
 
-          {/* Mobile hamburger button */}
+          {/* Mobile Hamburger Menu Toggle */}
           <button
             className="mobile-menu-toggle"
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-            aria-label="Toggle navigation menu"
+            aria-label="Open mobile menu"
           >
             {mobileMenuOpen ? <X size={22} /> : <Menu size={22} />}
           </button>
         </div>
       </div>
 
-      {/* Mobile Drawer */}
+      {/* Mobile Drawer Menu */}
       {mobileMenuOpen && (
-        <div className="mobile-nav-drawer">
-          <Link
-            to="/destinations"
-            className={`mobile-nav-link ${isActive('/destinations') ? 'active' : ''}`}
-            onClick={() => setMobileMenuOpen(false)}
-          >
-            <MapPin size={18} />
-            <span>Destinations</span>
-          </Link>
-
-          {isAuthenticated && (
-            <Link
-              to="/trips"
-              className={`mobile-nav-link ${isActive('/trips') ? 'active' : ''}`}
-              onClick={() => setMobileMenuOpen(false)}
-            >
-              <Calendar size={18} />
-              <span>My Trips</span>
-            </Link>
-          )}
-
-          <div className="mobile-drawer-footer">
-            {isAuthenticated ? (
-              <button onClick={handleLogout} className="btn-logout-mobile">
-                <LogOut size={16} />
-                <span>Logout ({user?.email})</span>
-              </button>
-            ) : (
-              <div className="mobile-auth-row">
-                <Link to="/login" className="btn-nav-login" onClick={() => setMobileMenuOpen(false)}>
-                  Sign In
-                </Link>
-                <Link to="/register" className="btn-nav-register" onClick={() => setMobileMenuOpen(false)}>
-                  Register
-                </Link>
+        <div className="mobile-drawer-backdrop" onClick={() => setMobileMenuOpen(false)}>
+          <div className="mobile-drawer" onClick={(e) => e.stopPropagation()}>
+            <div className="mobile-drawer-header">
+              <div className="brand-icon-box">
+                <Compass size={18} />
               </div>
-            )}
+              <span className="brand-name">TripNest</span>
+              <button className="mobile-close-btn" onClick={() => setMobileMenuOpen(false)}>
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="mobile-drawer-links">
+              <Link
+                to="/destinations"
+                className={`mobile-nav-link ${isActive('/destinations') ? 'active' : ''}`}
+                onClick={() => setMobileMenuOpen(false)}
+              >
+                <Compass size={18} />
+                <span>Explore Destinations</span>
+              </Link>
+
+              {isAuthenticated && (
+                <Link
+                  to="/trips"
+                  className={`mobile-nav-link ${isActive('/trips') ? 'active' : ''}`}
+                  onClick={() => setMobileMenuOpen(false)}
+                >
+                  <Briefcase size={18} />
+                  <span>My Trips Workspace</span>
+                </Link>
+              )}
+
+              {isAuthenticated && (
+                <Link
+                  to="/trips?action=create"
+                  className="mobile-nav-link create-trip-link"
+                  onClick={() => setMobileMenuOpen(false)}
+                >
+                  <PlusCircle size={18} />
+                  <span>Create New Trip</span>
+                </Link>
+              )}
+            </div>
+
+            <div className="mobile-drawer-footer">
+              {isAuthenticated ? (
+                <button onClick={handleLogout} className="btn-mobile-logout">
+                  <LogOut size={18} />
+                  <span>Sign Out</span>
+                </button>
+              ) : (
+                <div className="mobile-auth-actions">
+                  <Link
+                    to="/login"
+                    className="btn-mobile-login"
+                    onClick={() => setMobileMenuOpen(false)}
+                  >
+                    Sign In
+                  </Link>
+                  <Link
+                    to="/register"
+                    className="btn-mobile-register"
+                    onClick={() => setMobileMenuOpen(false)}
+                  >
+                    Register
+                  </Link>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}

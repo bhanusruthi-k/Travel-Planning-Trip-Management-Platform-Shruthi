@@ -5,7 +5,6 @@ import com.tripnest.tripnest_backend.dto.destination.DestinationResponseDTO;
 import com.tripnest.tripnest_backend.dto.trip.TripRequestDTO;
 import com.tripnest.tripnest_backend.dto.trip.TripResponseDTO;
 import com.tripnest.tripnest_backend.exception.BadRequestException;
-import com.tripnest.tripnest_backend.exception.ForbiddenException;
 import com.tripnest.tripnest_backend.exception.ResourceNotFoundException;
 import com.tripnest.tripnest_backend.model.Destination;
 import com.tripnest.tripnest_backend.model.Role;
@@ -13,8 +12,11 @@ import com.tripnest.tripnest_backend.model.Trip;
 import com.tripnest.tripnest_backend.model.TripStatus;
 import com.tripnest.tripnest_backend.model.User;
 import com.tripnest.tripnest_backend.repository.DestinationRepository;
+import com.tripnest.tripnest_backend.repository.JoinRequestRepository;
+import com.tripnest.tripnest_backend.repository.TripMembershipRepository;
 import com.tripnest.tripnest_backend.repository.TripRepository;
 import com.tripnest.tripnest_backend.repository.UserRepository;
+import com.tripnest.tripnest_backend.service.TripAccessService;
 import com.tripnest.tripnest_backend.service.TripService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -30,6 +32,9 @@ public class TripServiceImpl implements TripService {
     private final TripRepository tripRepository;
     private final UserRepository userRepository;
     private final DestinationRepository destinationRepository;
+    private final TripMembershipRepository tripMembershipRepository;
+    private final JoinRequestRepository joinRequestRepository;
+    private final TripAccessService tripAccessService;
 
     @Override
     @Transactional
@@ -70,7 +75,7 @@ public class TripServiceImpl implements TripService {
         if (user.getRole() == Role.ADMINISTRATOR) {
             trips = tripRepository.findAllWithDetails();
         } else {
-            trips = tripRepository.findAllWithDetailsByUserId(user.getId());
+            trips = tripRepository.findAllAccessibleByUserId(user.getId());
         }
 
         return trips.stream()
@@ -87,7 +92,7 @@ public class TripServiceImpl implements TripService {
         Trip trip = tripRepository.findByIdWithDetails(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Trip not found with id: " + id));
 
-        validateOwnership(trip, user);
+        tripAccessService.validateTripAccess(user, trip);
 
         return mapToDTO(trip);
     }
@@ -101,7 +106,7 @@ public class TripServiceImpl implements TripService {
         Trip trip = tripRepository.findByIdWithDetails(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Trip not found with id: " + id));
 
-        validateOwnership(trip, user);
+        tripAccessService.validateTripAccess(user, trip);
 
         if (dto.getDestinationId() != null && !dto.getDestinationId().equals(trip.getDestination().getId())) {
             Destination destination = destinationRepository.findById(dto.getDestinationId())
@@ -147,18 +152,12 @@ public class TripServiceImpl implements TripService {
         Trip trip = tripRepository.findByIdWithDetails(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Trip not found with id: " + id));
 
-        validateOwnership(trip, user);
+        tripAccessService.validateTripDelete(user, trip);
+
+        tripMembershipRepository.deleteByTripId(trip.getId());
+        joinRequestRepository.deleteByTripId(trip.getId());
 
         tripRepository.delete(trip);
-    }
-
-    private void validateOwnership(Trip trip, User user) {
-        if (user.getRole() == Role.ADMINISTRATOR) {
-            return;
-        }
-        if (!trip.getUser().getId().equals(user.getId())) {
-            throw new ForbiddenException("You do not have permission to access or modify this trip.");
-        }
     }
 
     public TripResponseDTO mapToDTO(Trip trip) {

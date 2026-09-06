@@ -3,16 +3,15 @@ package com.tripnest.tripnest_backend.service.impl;
 import com.tripnest.tripnest_backend.dto.budget.BudgetRequestDTO;
 import com.tripnest.tripnest_backend.dto.budget.BudgetResponseDTO;
 import com.tripnest.tripnest_backend.exception.BadRequestException;
-import com.tripnest.tripnest_backend.exception.ForbiddenException;
 import com.tripnest.tripnest_backend.exception.ResourceNotFoundException;
 import com.tripnest.tripnest_backend.model.Budget;
-import com.tripnest.tripnest_backend.model.Role;
 import com.tripnest.tripnest_backend.model.Trip;
 import com.tripnest.tripnest_backend.model.User;
 import com.tripnest.tripnest_backend.repository.BudgetRepository;
 import com.tripnest.tripnest_backend.repository.TripRepository;
 import com.tripnest.tripnest_backend.repository.UserRepository;
 import com.tripnest.tripnest_backend.service.BudgetService;
+import com.tripnest.tripnest_backend.service.TripAccessService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -26,6 +25,7 @@ public class BudgetServiceImpl implements BudgetService {
     private final BudgetRepository budgetRepository;
     private final TripRepository tripRepository;
     private final UserRepository userRepository;
+    private final TripAccessService tripAccessService;
 
     @Override
     @Transactional
@@ -33,7 +33,7 @@ public class BudgetServiceImpl implements BudgetService {
         User user = getUser(userEmail);
         Trip trip = tripRepository.findByIdWithDetails(tripId)
                 .orElseThrow(() -> new ResourceNotFoundException("Trip not found with id: " + tripId));
-        validateOwnership(trip, user);
+        tripAccessService.validateTripAccess(user, trip);
 
         if (budgetRepository.existsByTripId(tripId)) {
             throw new BadRequestException("A budget already exists for this trip. Please update the existing budget instead.");
@@ -69,7 +69,7 @@ public class BudgetServiceImpl implements BudgetService {
         User user = getUser(userEmail);
         Trip trip = tripRepository.findByIdWithDetails(tripId)
                 .orElseThrow(() -> new ResourceNotFoundException("Trip not found with id: " + tripId));
-        validateOwnership(trip, user);
+        tripAccessService.validateTripAccess(user, trip);
 
         Budget budget = budgetRepository.findByTripId(tripId)
                 .orElseThrow(() -> new ResourceNotFoundException("Budget not found for trip id: " + tripId));
@@ -107,7 +107,7 @@ public class BudgetServiceImpl implements BudgetService {
         User user = getUser(userEmail);
         Trip trip = tripRepository.findByIdWithDetails(tripId)
                 .orElseThrow(() -> new ResourceNotFoundException("Trip not found with id: " + tripId));
-        validateOwnership(trip, user);
+        tripAccessService.validateTripAccess(user, trip);
 
         Budget budget = budgetRepository.findByTripId(tripId)
                 .orElseThrow(() -> new ResourceNotFoundException("No budget found for trip id: " + tripId));
@@ -121,7 +121,7 @@ public class BudgetServiceImpl implements BudgetService {
         User user = getUser(userEmail);
         Trip trip = tripRepository.findByIdWithDetails(tripId)
                 .orElseThrow(() -> new ResourceNotFoundException("Trip not found with id: " + tripId));
-        validateOwnership(trip, user);
+        tripAccessService.validateTripAccess(user, trip);
 
         Budget budget = budgetRepository.findByTripId(tripId)
                 .orElseThrow(() -> new ResourceNotFoundException("Budget not found for trip id: " + tripId));
@@ -151,15 +151,6 @@ public class BudgetServiceImpl implements BudgetService {
     private User getUser(String email) {
         return userRepository.findByEmail(email)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found with email: " + email));
-    }
-
-    private void validateOwnership(Trip trip, User user) {
-        if (user.getRole() == Role.ADMINISTRATOR) {
-            return;
-        }
-        if (!trip.getUser().getId().equals(user.getId())) {
-            throw new ForbiddenException("You do not have permission to access or modify this trip's budget.");
-        }
     }
 
     private BudgetResponseDTO mapToDTO(Budget budget) {

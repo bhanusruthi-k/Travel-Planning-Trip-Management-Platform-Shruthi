@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { destinationApi } from '../api/destinationApi';
 import { useAuth } from '../context/AuthContext';
+import { getDestinationPhotos } from '../utils/destinationGalleries';
+import GalleryModal from '../components/GalleryModal';
 import {
   MapPin,
   Calendar,
@@ -14,10 +16,13 @@ import {
   Star,
   ArrowLeft,
   Compass,
-  Sparkles,
+  DollarSign,
+  Plus,
+  Images,
   Camera,
-  Layers,
-  Thermometer,
+  CheckCircle2,
+  Globe2,
+  Info,
 } from 'lucide-react';
 
 const DestinationDetailsPage = () => {
@@ -27,6 +32,10 @@ const DestinationDetailsPage = () => {
   const [places, setPlaces] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+
+  // Gallery Modal
+  const [galleryOpen, setGalleryOpen] = useState(false);
+  const [galleryIndex, setGalleryIndex] = useState(0);
 
   const { isAuthenticated } = useAuth();
   const navigate = useNavigate();
@@ -43,10 +52,10 @@ const DestinationDetailsPage = () => {
         ]);
         setDestination(destData);
         setWeather(weatherData);
-        setPlaces(placesData);
+        setPlaces(placesData || []);
       } catch (err) {
         console.error('Failed to load destination details:', err);
-        setError('Destination not found or failed to load.');
+        setError('Destination details could not be retrieved.');
       } finally {
         setLoading(false);
       }
@@ -63,185 +72,244 @@ const DestinationDetailsPage = () => {
     }
   };
 
+  const openGalleryAt = (idx = 0) => {
+    setGalleryIndex(idx);
+    setGalleryOpen(true);
+  };
+
   const getWeatherIcon = (condition = '') => {
     const cond = condition.toLowerCase();
-    if (cond.includes('rain') || cond.includes('shower')) return <CloudRain size={28} className="weather-icon-dynamic rain" />;
-    if (cond.includes('snow')) return <CloudSnow size={28} className="weather-icon-dynamic snow" />;
-    if (cond.includes('cloud')) return <CloudSun size={28} className="weather-icon-dynamic cloud" />;
-    return <Sun size={28} className="weather-icon-dynamic sun" />;
+    if (cond.includes('rain') || cond.includes('shower')) return <CloudRain size={28} className="weather-icon-rain" />;
+    if (cond.includes('snow')) return <CloudSnow size={28} className="weather-icon-snow" />;
+    if (cond.includes('cloud')) return <CloudSun size={28} className="weather-icon-cloud" />;
+    return <Sun size={28} className="weather-icon-sun" />;
   };
 
   if (loading) {
     return (
-      <div className="page-container loading-state">
-        <div className="spinner"></div>
-        <p>Loading destination guide, weather, and top spots...</p>
+      <div className="destinations-workspace-container loading-state-center">
+        <div className="travel-spinner"></div>
+        <p>Opening destination guide...</p>
       </div>
     );
   }
 
   if (error || !destination) {
     return (
-      <div className="page-container empty-state">
-        <Compass size={40} className="empty-icon" />
+      <div className="destinations-workspace-container empty-state-box">
+        <Compass size={44} className="empty-icon" />
         <h3>{error || 'Destination not found'}</h3>
-        <p>Please check the destination link or browse all available destinations.</p>
-        <Link to="/destinations" className="btn-primary mt-3">
-          <ArrowLeft size={16} />
-          <span>Back to All Destinations</span>
+        <p>The destination you requested may have been moved or removed from our directory.</p>
+        <Link to="/destinations" className="btn-back-link">
+          <ArrowLeft size={16} /> Back to Destinations
         </Link>
       </div>
     );
   }
 
+  const destinationPhotos = getDestinationPhotos(destination);
+
   return (
-    <div className="page-container destination-details-container">
-      {/* Top Breadcrumb navigation */}
-      <div className="dest-breadcrumb-bar">
+    <div className="destinations-workspace-container">
+      {/* 1. TOP BREADCRUMB & ACTION BAR */}
+      <div className="details-top-nav">
         <Link to="/destinations" className="btn-back-link">
-          <ArrowLeft size={16} />
-          <span>Explore All Destinations</span>
+          <ArrowLeft size={16} /> Back to Destinations
         </Link>
+
+        <div className="details-top-actions">
+          <button
+            onClick={() => openGalleryAt(0)}
+            className="btn-secondary-action"
+            title="Browse all photos"
+          >
+            <Camera size={15} /> View Gallery ({destinationPhotos.length} Photos)
+          </button>
+          <button onClick={handlePlanTrip} className="btn-primary-action">
+            <Plus size={16} /> Plan a Trip to {destination.name}
+          </button>
+        </div>
       </div>
 
-      {/* Hero Showcase */}
-      <section className="dest-detail-hero">
-        <div className="dest-detail-hero-media">
+      {/* 2. DESTINATION HERO BANNER WITH GALLERY TRIGGER */}
+      <section
+        className="dest-hero-banner clickable-hero"
+        onClick={() => openGalleryAt(0)}
+        title="Click anywhere to open full-screen photo gallery"
+      >
+        <div className="dest-hero-image-wrap">
           <img
-            src={
-              destination.imageUrl ||
-              'https://images.unsplash.com/photo-1488646953014-85cb44e25828?auto=format&fit=crop&w=1400&q=80'
-            }
+            src={destinationPhotos[0]?.url || destination.imageUrl}
             alt={destination.name}
-            className="dest-detail-hero-img"
+            className="dest-hero-img"
+            onError={(e) => {
+              e.target.onerror = null;
+              e.target.src = 'https://images.unsplash.com/photo-1502602898657-3e91760cbb34?auto=format&fit=crop&w=1400&q=80';
+            }}
           />
-          <div className="dest-detail-hero-overlay"></div>
-          {destination.category && (
-            <span className="dest-hero-category-badge">
-              <Layers size={13} />
-              <span>{destination.category}</span>
-            </span>
-          )}
+          <div className="dest-hero-overlay"></div>
+
+          <button
+            className="hero-gallery-badge-btn"
+            onClick={(e) => {
+              e.stopPropagation();
+              openGalleryAt(0);
+            }}
+          >
+            <Images size={15} /> Open Photo Gallery ({destinationPhotos.length} Photos)
+          </button>
         </div>
 
-        <div className="dest-detail-hero-card">
-          <div className="hero-card-left">
-            <div className="dest-hero-location-pill">
-              <MapPin size={14} />
-              <span>{destination.country}</span>
-            </div>
-            <h1 className="dest-hero-main-title">{destination.name}</h1>
-            <p className="dest-hero-lead-desc">{destination.description}</p>
+        <div className="dest-hero-content">
+          <div className="dest-hero-tags">
+            <span className="dest-country-badge">
+              <MapPin size={14} /> {destination.country}
+            </span>
+            {destination.category && (
+              <span className="dest-cat-badge">{destination.category}</span>
+            )}
           </div>
 
-          <div className="hero-card-right">
-            {destination.averageCost && (
-              <div className="dest-hero-budget-card">
-                <span className="budget-label">Estimated Avg. Budget</span>
-                <span className="budget-val">
-                  ${Math.round(destination.averageCost).toLocaleString()}
-                </span>
-                <span className="budget-note">Per person / typical week</span>
-              </div>
-            )}
-            <button onClick={handlePlanTrip} className="btn-primary btn-plan-hero">
-              <Calendar size={17} />
-              <span>Plan Trip to {destination.name}</span>
-            </button>
-          </div>
+          <h1 className="dest-hero-title">{destination.name}</h1>
+          <p className="dest-hero-desc">
+            {destination.description ||
+              `Discover the unique attractions, vibrant culture, and stunning sights of ${destination.name}.`}
+          </p>
         </div>
       </section>
 
-      {/* Main Grid: Weather + Places */}
-      <div className="dest-content-grid">
-        {/* Left Column: Google Places & Top Attractions */}
-        <section className="dest-main-column">
-          <div className="section-title-wrap">
-            <div className="section-title-icon-badge">
-              <Camera size={16} />
-            </div>
+      {/* 3. QUICK INFO RIBBON */}
+      <section className="quick-info-ribbon">
+        <div className="info-ribbon-card">
+          <Globe2 size={18} className="ribbon-icon" />
+          <div>
+            <span className="ribbon-label">Country</span>
+            <strong className="ribbon-val">{destination.country}</strong>
+          </div>
+        </div>
+
+        {destination.averageCost != null && (
+          <div className="info-ribbon-card">
+            <DollarSign size={18} className="ribbon-icon" />
             <div>
-              <h2 className="section-heading">Top Attractions & Places</h2>
-              <p className="section-subheading">
-                Must-visit sights, cultural landmarks, and dining spots powered by Google Places
-              </p>
+              <span className="ribbon-label">Avg. Estimated Budget</span>
+              <strong className="ribbon-val">₹{Number(destination.averageCost).toLocaleString()}</strong>
+            </div>
+          </div>
+        )}
+
+        <div className="info-ribbon-card">
+          <Star size={18} className="ribbon-icon" />
+          <div>
+            <span className="ribbon-label">Category</span>
+            <strong className="ribbon-val">{destination.category || 'Travel Hotspot'}</strong>
+          </div>
+        </div>
+
+        {weather && (
+          <div className="info-ribbon-card">
+            <CloudSun size={18} className="ribbon-icon" />
+            <div>
+              <span className="ribbon-label">Current Temperature</span>
+              <strong className="ribbon-val">{weather.temperature ? `${weather.temperature}°C` : '24°C'}</strong>
+            </div>
+          </div>
+        )}
+      </section>
+
+      {/* 4. MAIN WORKSPACE CONTENT GRID (2/3 CONTENT + 1/3 SIDEBAR) */}
+      <div className="details-content-grid">
+        {/* Left Column: About & Attractions */}
+        <div className="details-main-column">
+          {/* ABOUT THIS DESTINATION */}
+          <div className="details-section-card">
+            <h2 className="section-card-title">About {destination.name}</h2>
+            <p className="section-card-text">
+              {destination.description ||
+                `${destination.name} is one of the world's most captivating travel destinations. Known for its historical depth, scenic viewpoints, and rich cultural traditions, it attracts millions of explorers every year.`}
+            </p>
+
+            <div className="travel-tips-box">
+              <div className="tip-header">
+                <Info size={16} />
+                <strong>Travel Planning Highlights</strong>
+              </div>
+              <ul className="tip-list">
+                <li><CheckCircle2 size={14} /> Recommended trip length: 3 to 7 days to fully experience key sights.</li>
+                <li><CheckCircle2 size={14} /> Walkable central district with efficient local public transit.</li>
+                <li><CheckCircle2 size={14} /> Mix of historic landmarks, bustling food markets, and cultural galleries.</li>
+              </ul>
             </div>
           </div>
 
-          {places.length === 0 ? (
-            <div className="empty-subcard">
-              <Compass size={28} className="empty-icon-sm" />
-              <p>Attraction recommendations for {destination.name} will be added shortly.</p>
-            </div>
-          ) : (
-            <div className="places-grid">
-              {places.map((place) => (
-                <article key={place.id} className="place-card">
-                  {place.imageUrl && (
-                    <div className="place-card-img-wrap">
-                      <img
-                        src={place.imageUrl}
-                        alt={place.name}
-                        className="place-card-img"
-                        loading="lazy"
-                      />
-                      {place.category && (
-                        <span className="place-category-badge">{place.category}</span>
-                      )}
-                    </div>
-                  )}
-
-                  <div className="place-card-body">
-                    <div className="place-card-top">
-                      <h3 className="place-name">{place.name}</h3>
-                      {place.rating && (
-                        <div className="place-rating-badge">
-                          <Star size={12} fill="#f59e0b" color="#f59e0b" />
-                          <span className="rating-score">{place.rating}</span>
-                          {place.reviewCount && (
-                            <span className="review-count">({place.reviewCount.toLocaleString()})</span>
-                          )}
-                        </div>
-                      )}
-                    </div>
-
-                    {place.description && (
-                      <p className="place-desc">{place.description}</p>
-                    )}
-
-                    {place.address && (
-                      <div className="place-address-row">
-                        <MapPin size={13} className="address-icon" />
-                        <span className="address-text">{place.address}</span>
-                      </div>
-                    )}
-                  </div>
-                </article>
-              ))}
-            </div>
-          )}
-        </section>
-
-        {/* Right Sidebar: Live Weather + Travel Action Widget */}
-        <aside className="dest-sidebar-column">
-          {weather && (
-            <div className="weather-widget-card">
-              <div className="weather-widget-header">
-                <div className="weather-header-title">
-                  <Thermometer size={17} />
-                  <span>Live Weather Forecast</span>
-                </div>
-                <span className="weather-city-badge">{destination.name}</span>
+          {/* PLACES & ATTRACTIONS */}
+          <div className="details-section-card">
+            <div className="section-title-strip">
+              <div>
+                <h2 className="section-card-title">Popular Places & Attractions</h2>
+                <p className="section-subtitle">Must-see sights and activities around {destination.name}</p>
               </div>
+            </div>
 
+            {places && places.length > 0 ? (
+              <div className="attractions-grid">
+                {places.map((place, idx) => (
+                  <div key={idx} className="attraction-item-card">
+                    <div className="attraction-photo-wrap">
+                      <img
+                        src={place.imageUrl || destinationPhotos[(idx + 1) % destinationPhotos.length]?.url}
+                        alt={place.name}
+                        className="attraction-photo"
+                        loading="lazy"
+                        onError={(e) => {
+                          e.target.onerror = null;
+                          e.target.src = 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?auto=format&fit=crop&w=600&q=80';
+                        }}
+                      />
+                    </div>
+                    <div className="attraction-info">
+                      <div className="attraction-title-row">
+                        <h4 className="attraction-name">{place.name}</h4>
+                        {place.rating && (
+                          <span className="attraction-rating">
+                            <Star size={12} fill="currentColor" /> {place.rating}
+                          </span>
+                        )}
+                      </div>
+                      {place.address && (
+                        <p className="attraction-address">
+                          <MapPin size={12} /> {place.address}
+                        </p>
+                      )}
+                      {place.description && (
+                        <p className="attraction-desc">{place.description}</p>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="places-empty-banner">
+                <p>Curated local attractions will automatically populate when you start your itinerary.</p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Right Column: Weather & Quick Launch */}
+        <div className="details-sidebar-column">
+          {/* LIVE WEATHER WIDGET */}
+          {weather && (
+            <div className="details-section-card weather-widget-card">
+              <h3 className="widget-card-title">Live Weather Bulletin</h3>
+              
               <div className="weather-main-display">
-                <div className="weather-temp-group">
-                  <span className="current-temp">{Math.round(weather.temperature)}°</span>
-                  <span className="temp-unit">C</span>
-                </div>
-                <div className="weather-condition-group">
+                <div className="weather-icon-box">
                   {getWeatherIcon(weather.condition)}
-                  <span className="current-condition-text">{weather.condition}</span>
+                </div>
+                <div className="weather-temp-group">
+                  <span className="weather-degrees">{weather.temperature || 24}°C</span>
+                  <span className="weather-condition-text">{weather.condition || 'Clear Skies'}</span>
                 </div>
               </div>
 
@@ -250,54 +318,43 @@ const DestinationDetailsPage = () => {
                   <Droplets size={16} className="metric-icon" />
                   <div>
                     <span className="metric-label">Humidity</span>
-                    <span className="metric-value">{weather.humidity}%</span>
+                    <strong className="metric-value">{weather.humidity || 65}%</strong>
                   </div>
                 </div>
+
                 <div className="weather-metric-item">
                   <Wind size={16} className="metric-icon" />
                   <div>
-                    <span className="metric-label">Wind Speed</span>
-                    <span className="metric-value">{weather.windSpeed} km/h</span>
+                    <span className="metric-label">Wind</span>
+                    <strong className="metric-value">{weather.windSpeed || 12} km/h</strong>
                   </div>
                 </div>
               </div>
-
-              {weather.forecast && weather.forecast.length > 0 && (
-                <div className="weather-forecast-block">
-                  <h4 className="forecast-title">3-Day Forecast</h4>
-                  <div className="forecast-days-list">
-                    {weather.forecast.map((f, idx) => (
-                      <div key={idx} className="forecast-row">
-                        <span className="forecast-day-name">{f.day}</span>
-                        <div className="forecast-cond-wrap">
-                          {getWeatherIcon(f.condition)}
-                          <span className="forecast-cond-text">{f.condition}</span>
-                        </div>
-                        <span className="forecast-temp-val">{Math.round(f.temp)}°C</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
             </div>
           )}
 
-          {/* Quick Plan CTA Card */}
-          <div className="quick-plan-sidebar-card">
-            <div className="quick-plan-icon-wrapper">
-              <Sparkles size={22} />
-            </div>
-            <h3 className="quick-plan-title">Ready for {destination.name}?</h3>
-            <p className="quick-plan-desc">
-              Create a customized trip with daily schedules, budgeted activities, and personal notes in seconds.
+          {/* TRIP PLANNER QUICK LAUNCH */}
+          <div className="details-section-card plan-launch-card">
+            <h3 className="widget-card-title">Plan Your Expedition</h3>
+            <p className="widget-card-text">
+              Add {destination.name} to your trips to build your daily timeline, manage expenses, and track your travel budget.
             </p>
-            <button onClick={handlePlanTrip} className="btn-primary btn-full">
-              <Calendar size={16} />
-              <span>Create {destination.name} Itinerary</span>
+
+            <button onClick={handlePlanTrip} className="btn-launch-trip">
+              <Plus size={16} /> Start Planning Trip
             </button>
           </div>
-        </aside>
+        </div>
       </div>
+
+      {/* 5. FULL-SCREEN GALLERY LIGHTBOX */}
+      <GalleryModal
+        isOpen={galleryOpen}
+        onClose={() => setGalleryOpen(false)}
+        destination={destination}
+        initialIndex={galleryIndex}
+        photos={destinationPhotos}
+      />
     </div>
   );
 };
