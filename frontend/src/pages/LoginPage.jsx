@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { Compass, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { useToast } from '../context/ToastContext';
+import { Compass, AlertCircle, CheckCircle2, Lock, Mail } from 'lucide-react';
 
 const LoginPage = () => {
   const [email, setEmail] = useState('');
@@ -10,6 +11,7 @@ const LoginPage = () => {
   const [loading, setLoading] = useState(false);
 
   const { login } = useAuth();
+  const { showToast } = useToast();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -21,12 +23,14 @@ const LoginPage = () => {
     setLoading(true);
 
     try {
-      await login(email, password);
+      const user = await login(email, password);
+      showToast(`Welcome back, ${user.fullName || user.email}!`, 'success');
       navigate(from, { replace: true });
     } catch (err) {
       console.error('Login error:', err);
       const msg = err.response?.data?.message || 'Invalid email or password. Please try again.';
       setError(msg);
+      showToast(msg, 'error');
     } finally {
       setLoading(false);
     }
@@ -44,7 +48,7 @@ const LoginPage = () => {
         <div className="auth-card">
           <div className="auth-header">
             <div className="auth-icon-circle">
-              <Compass size={24} />
+              <Compass size={28} />
             </div>
             <h1 className="auth-title">Welcome Back</h1>
             <p className="auth-subtitle">Sign in to your TripNest account to manage your trips</p>
@@ -60,32 +64,38 @@ const LoginPage = () => {
           <form onSubmit={handleSubmit} className="auth-form">
             <div className="form-group">
               <label htmlFor="email">Email Address</label>
-              <input
-                id="email"
-                type="email"
-                placeholder="name@example.com"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-                className="form-input"
-                autoComplete="email"
-              />
+              <div className="input-with-icon">
+                <Mail size={16} className="field-icon" />
+                <input
+                  id="email"
+                  type="email"
+                  placeholder="name@example.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  required
+                  className="form-input with-left-icon"
+                  autoComplete="email"
+                />
+              </div>
             </div>
 
             <div className="form-group">
               <div className="label-row">
                 <label htmlFor="password">Password</label>
               </div>
-              <input
-                id="password"
-                type="password"
-                placeholder="Enter your password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                className="form-input"
-                autoComplete="current-password"
-              />
+              <div className="input-with-icon">
+                <Lock size={16} className="field-icon" />
+                <input
+                  id="password"
+                  type="password"
+                  placeholder="Enter your password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                  className="form-input with-left-icon"
+                  autoComplete="current-password"
+                />
+              </div>
             </div>
 
             <button

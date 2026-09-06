@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useSearchParams, Link, useNavigate } from 'react-router-dom';
 import { tripApi } from '../api/tripApi';
 import { destinationApi } from '../api/destinationApi';
-import { useAuth } from '../context/AuthContext';
+import { useToast } from '../context/ToastContext';
 import {
   Calendar,
   MapPin,
@@ -14,6 +14,9 @@ import {
   Compass,
   DollarSign,
   ListTodo,
+  Clock,
+  Luggage,
+  Sparkles,
 } from 'lucide-react';
 
 const TripsPage = () => {
@@ -38,11 +41,33 @@ const TripsPage = () => {
   const [modalLoading, setModalLoading] = useState(false);
   const [modalError, setModalError] = useState('');
 
-  const { user } = useAuth();
+  const { showToast } = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
 
-  const fetchTripsAndDestinations = async () => {
+  const openCreateModal = useCallback((preselectedDestId = '', destList = destinations) => {
+    setEditingTripId(null);
+    const today = new Date().toISOString().split('T')[0];
+    const nextWeek = new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0];
+    
+    // Find preselected destination default budget if available
+    const chosen = destList.find((d) => String(d.id) === String(preselectedDestId));
+    const defaultBudget = chosen?.averageCost ? String(chosen.averageCost) : '1500';
+
+    setFormData({
+      title: chosen ? `Trip to ${chosen.name}` : '',
+      description: '',
+      destinationId: preselectedDestId || (destList[0]?.id ? String(destList[0].id) : ''),
+      startDate: today,
+      endDate: nextWeek,
+      budget: defaultBudget,
+      status: 'PLANNED',
+    });
+    setModalError('');
+    setIsModalOpen(true);
+  }, [destinations]);
+
+  const fetchTripsAndDestinations = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
@@ -65,26 +90,11 @@ const TripsPage = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [searchParams, setSearchParams, openCreateModal]);
 
   useEffect(() => {
     fetchTripsAndDestinations();
-  }, []);
-
-  const openCreateModal = (preselectedDestId = '', destList = destinations) => {
-    setEditingTripId(null);
-    setFormData({
-      title: '',
-      description: '',
-      destinationId: preselectedDestId || (destList[0]?.id ? String(destList[0].id) : ''),
-      startDate: new Date().toISOString().split('T')[0],
-      endDate: new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0],
-      budget: '1500',
-      status: 'PLANNED',
-    });
-    setModalError('');
-    setIsModalOpen(true);
-  };
+  }, [fetchTripsAndDestinations]);
 
   const openEditModal = (e, trip) => {
     e.stopPropagation();
@@ -129,7 +139,7 @@ const TripsPage = () => {
 
     try {
       const payload = {
-        title: formData.title,
+        title: formData.title.trim(),
         description: formData.description,
         destinationId: parseInt(formData.destinationId, 10),
         startDate: formData.startDate,
@@ -140,8 +150,10 @@ const TripsPage = () => {
 
       if (editingTripId) {
         await tripApi.updateTrip(editingTripId, payload);
+        showToast('Trip updated successfully!', 'success');
       } else {
         await tripApi.createTrip(payload);
+        showToast('New trip planned successfully!', 'success');
       }
 
       closeModal();
@@ -153,6 +165,7 @@ const TripsPage = () => {
         err.response?.data?.error ||
         'Error saving trip. Please try again.';
       setModalError(msg);
+      showToast(msg, 'error');
     } finally {
       setModalLoading(false);
     }
@@ -164,11 +177,19 @@ const TripsPage = () => {
       try {
         await tripApi.deleteTrip(id);
         setTrips(trips.filter((t) => t.id !== id));
+        showToast(`Trip "${title}" deleted`, 'info');
       } catch (err) {
         console.error('Failed to delete trip:', err);
-        alert(err.response?.data?.message || 'Failed to delete trip');
+        showToast(err.response?.data?.message || 'Failed to delete trip', 'error');
       }
     }
+  };
+
+  const calculateDuration = (start, end) => {
+    if (!start || !end) return '';
+    const diff = Math.round((new Date(end) - new Date(start)) / (1000 * 60 * 60 * 24)) + 1;
+    if (diff <= 1) return '1 Day';
+    return `${diff} Days / ${diff - 1} Nights`;
   };
 
   const filteredTrips = trips.filter((t) => {
@@ -189,29 +210,74 @@ const TripsPage = () => {
     }
   };
 
-  const counts = {
-    ALL: trips.length,
-    PLANNED: trips.filter((t) => t.status === 'PLANNED').length,
-    ONGOING: trips.filter((t) => t.status === 'ONGOING').length,
-    COMPLETED: trips.filter((t) => t.status === 'COMPLETED').length,
-    CANCELLED: trips.filter((t) => t.status === 'CANCELLED').length,
-  };
+  const totalBudget = trips.reduce((sum, t) => sum + (t.budget || 0), 0);
+  const plannedCount = trips.filter((t) => t.status === 'PLANNED').length;
+  const ongoingCount = trips.filter((t) => t.status === 'ONGOING').length;
+  const completedCount = trips.filter((t) => t.status === 'COMPLETED').length;
+  const cancelledCount = trips.filter((t) => t.status === 'CANCELLED').length;
 
   return (
     <div className="page-container">
       {/* Top Header */}
       <div className="trips-header-section">
-        <div>
-          <h1 className="page-title">My Trips</h1>
+        <div className="trips-header-title-block">
+          <div className="header-greeting-pill">
+            <Luggage size={14} />
+            <span>Travel Itinerary Dashboard</span>
+          </div>
+          <h1 className="page-title">My Trips & Adventures</h1>
           <p className="page-subtitle">
-            Manage your travel itineraries, upcoming bookings, and past journeys.
+            Create itineraries, organize daily schedules, track trip budgets, and manage your bookings.
           </p>
         </div>
-        <div>
-          <button onClick={() => openCreateModal()} className="btn-primary">
-            <Plus size={16} />
-            <span>New Trip</span>
+        <div className="trips-header-actions">
+          <button onClick={() => openCreateModal()} className="btn-primary btn-create-trip">
+            <Plus size={18} />
+            <span>Plan New Trip</span>
           </button>
+        </div>
+      </div>
+
+      {/* Stats Summary Bar */}
+      <div className="trips-stats-grid">
+        <div className="trip-stat-card">
+          <div className="stat-icon-wrapper stat-blue">
+            <Compass size={18} />
+          </div>
+          <div className="stat-content">
+            <span className="stat-number">{trips.length}</span>
+            <span className="stat-label">Total Trips</span>
+          </div>
+        </div>
+
+        <div className="trip-stat-card">
+          <div className="stat-icon-wrapper stat-green">
+            <Sparkles size={18} />
+          </div>
+          <div className="stat-content">
+            <span className="stat-number">{ongoingCount}</span>
+            <span className="stat-label">Active / Ongoing</span>
+          </div>
+        </div>
+
+        <div className="trip-stat-card">
+          <div className="stat-icon-wrapper stat-amber">
+            <Calendar size={18} />
+          </div>
+          <div className="stat-content">
+            <span className="stat-number">{plannedCount}</span>
+            <span className="stat-label">Upcoming</span>
+          </div>
+        </div>
+
+        <div className="trip-stat-card">
+          <div className="stat-icon-wrapper stat-purple">
+            <DollarSign size={18} />
+          </div>
+          <div className="stat-content">
+            <span className="stat-number">${Math.round(totalBudget).toLocaleString()}</span>
+            <span className="stat-label">Total Planned Budget</span>
+          </div>
         </div>
       </div>
 
@@ -225,11 +291,11 @@ const TripsPage = () => {
       {/* Filter Tabs */}
       <div className="tabs-container" role="tablist" aria-label="Trip Status Filter">
         {[
-          { key: 'ALL', label: 'All Trips' },
-          { key: 'PLANNED', label: 'Planned' },
-          { key: 'ONGOING', label: 'Ongoing' },
-          { key: 'COMPLETED', label: 'Completed' },
-          { key: 'CANCELLED', label: 'Cancelled' },
+          { key: 'ALL', label: 'All Trips', count: trips.length },
+          { key: 'PLANNED', label: 'Planned', count: plannedCount },
+          { key: 'ONGOING', label: 'Ongoing', count: ongoingCount },
+          { key: 'COMPLETED', label: 'Completed', count: completedCount },
+          { key: 'CANCELLED', label: 'Cancelled', count: cancelledCount },
         ].map((tab) => (
           <button
             key={tab.key}
@@ -239,29 +305,29 @@ const TripsPage = () => {
             className={`tab-btn ${statusFilter === tab.key ? 'active' : ''}`}
           >
             <span>{tab.label}</span>
-            <span className="tab-count">{counts[tab.key]}</span>
+            <span className="tab-count">{tab.count}</span>
           </button>
         ))}
       </div>
 
-      {/* Trips Content */}
+      {/* Trips Grid / List */}
       {loading ? (
         <div className="loading-state">
           <div className="spinner"></div>
-          <p>Loading your trips...</p>
+          <p>Loading your trips and itinerary schedules...</p>
         </div>
       ) : filteredTrips.length === 0 ? (
         <div className="empty-state">
-          <Compass size={40} className="empty-icon" />
+          <Compass size={44} className="empty-icon" />
           <h3>No trips found</h3>
           <p>
             {statusFilter === 'ALL'
-              ? 'You have not planned any trips yet. Click the button below to start your itinerary.'
-              : `You have no trips marked as "${statusFilter.toLowerCase()}".`}
+              ? 'You have not planned any trips yet. Pick a destination and start crafting your itinerary.'
+              : `You have no trips currently marked as "${statusFilter.toLowerCase()}".`}
           </p>
           <button onClick={() => openCreateModal()} className="btn-primary mt-3">
             <Plus size={16} />
-            <span>Create a Trip</span>
+            <span>Create Your First Trip</span>
           </button>
         </div>
       ) : (
@@ -283,8 +349,16 @@ const TripsPage = () => {
                   className="trip-card-image"
                   loading="lazy"
                 />
-                <div className="trip-card-status-badge">
-                  {getStatusBadge(trip.status)}
+                <div className="trip-card-badges-overlay">
+                  <div className="trip-card-status-badge">
+                    {getStatusBadge(trip.status)}
+                  </div>
+                  {trip.startDate && trip.endDate && (
+                    <span className="trip-duration-pill">
+                      <Clock size={11} />
+                      <span>{calculateDuration(trip.startDate, trip.endDate)}</span>
+                    </span>
+                  )}
                 </div>
               </div>
 
@@ -292,22 +366,29 @@ const TripsPage = () => {
                 <div className="trip-destination-row">
                   <MapPin size={13} />
                   <span>
-                    {trip.destination ? `${trip.destination.name}, ${trip.destination.country}` : 'Destination'}
+                    {trip.destination ? `${trip.destination.name}, ${trip.destination.country}` : 'Custom Destination'}
                   </span>
                 </div>
 
                 <h2 className="trip-title">
-                  <Link to={`/trips/${trip.id}`} onClick={(e) => e.stopPropagation()} className="card-title-link">
+                  <Link
+                    to={`/trips/${trip.id}`}
+                    onClick={(e) => e.stopPropagation()}
+                    className="card-title-link"
+                  >
                     {trip.title}
                   </Link>
                 </h2>
-                {trip.description && <p className="trip-desc">{trip.description}</p>}
+
+                {trip.description && (
+                  <p className="trip-desc">{trip.description}</p>
+                )}
 
                 <div className="trip-metadata">
                   <div className="meta-item">
                     <Calendar size={14} />
                     <span>
-                      {trip.startDate} — {trip.endDate}
+                      {trip.startDate} → {trip.endDate}
                     </span>
                   </div>
 
@@ -323,28 +404,31 @@ const TripsPage = () => {
                   <Link
                     to={`/trips/${trip.id}`}
                     onClick={(e) => e.stopPropagation()}
-                    className="btn-action btn-edit"
-                    title="View Daily Itinerary"
+                    className="btn-action btn-itinerary-action"
+                    title="View & Manage Daily Schedule"
                   >
                     <ListTodo size={14} />
-                    <span>Itinerary</span>
+                    <span>Itinerary Schedule</span>
                   </Link>
-                  <button
-                    onClick={(e) => openEditModal(e, trip)}
-                    className="btn-action btn-edit"
-                    title="Edit Trip Details"
-                  >
-                    <Edit2 size={14} />
-                    <span>Edit</span>
-                  </button>
-                  <button
-                    onClick={(e) => handleDeleteTrip(e, trip.id, trip.title)}
-                    className="btn-action btn-delete"
-                    title="Delete Trip"
-                  >
-                    <Trash2 size={14} />
-                    <span>Delete</span>
-                  </button>
+
+                  <div className="trip-action-subgroup">
+                    <button
+                      onClick={(e) => openEditModal(e, trip)}
+                      className="btn-action btn-edit-icon"
+                      title="Edit Trip Details"
+                      aria-label="Edit Trip"
+                    >
+                      <Edit2 size={14} />
+                    </button>
+                    <button
+                      onClick={(e) => handleDeleteTrip(e, trip.id, trip.title)}
+                      className="btn-action btn-delete-icon"
+                      title="Delete Trip"
+                      aria-label="Delete Trip"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
                 </div>
               </div>
             </article>
@@ -355,9 +439,9 @@ const TripsPage = () => {
       {/* Create / Edit Trip Modal */}
       {isModalOpen && (
         <div className="modal-backdrop" onClick={(e) => { if (e.target === e.currentTarget) closeModal(); }}>
-          <div className="modal-container" role="dialog" aria-modal="true">
+          <div className="modal-container" role="dialog" aria-modal="true" aria-labelledby="modal-title">
             <div className="modal-header">
-              <h2>{editingTripId ? 'Edit Trip' : 'Plan a New Trip'}</h2>
+              <h2 id="modal-title">{editingTripId ? 'Edit Trip Details' : 'Plan a New Trip'}</h2>
               <button onClick={closeModal} className="btn-close-modal" aria-label="Close dialog">
                 <X size={18} />
               </button>
@@ -376,7 +460,7 @@ const TripsPage = () => {
                 <input
                   id="tripTitle"
                   type="text"
-                  placeholder="e.g. Summer Vacation in Paris"
+                  placeholder="e.g. 7-Day Romantic Holiday in Paris"
                   value={formData.title}
                   onChange={(e) => setFormData({ ...formData, title: e.target.value })}
                   required
@@ -389,14 +473,23 @@ const TripsPage = () => {
                 <select
                   id="tripDestination"
                   value={formData.destinationId}
-                  onChange={(e) => setFormData({ ...formData, destinationId: e.target.value })}
+                  onChange={(e) => {
+                    const selectedId = e.target.value;
+                    const dest = destinations.find(d => String(d.id) === selectedId);
+                    setFormData({
+                      ...formData,
+                      destinationId: selectedId,
+                      title: formData.title || (dest ? `Trip to ${dest.name}` : ''),
+                      budget: formData.budget || (dest?.averageCost ? String(dest.averageCost) : formData.budget),
+                    });
+                  }}
                   required
                   className="form-input form-select"
                 >
-                  <option value="">-- Choose a Destination --</option>
+                  <option value="">-- Select a Destination --</option>
                   {destinations.map((d) => (
                     <option key={d.id} value={d.id}>
-                      {d.name}, {d.country} ({d.category || 'General'})
+                      {d.name}, {d.country} {d.category ? `(${d.category})` : ''}
                     </option>
                   ))}
                 </select>
@@ -430,11 +523,12 @@ const TripsPage = () => {
 
               <div className="form-row">
                 <div className="form-group half-width">
-                  <label htmlFor="tripBudget">Budget (USD)</label>
+                  <label htmlFor="tripBudget">Total Budget (USD)</label>
                   <input
                     id="tripBudget"
                     type="number"
                     step="0.01"
+                    min="0"
                     placeholder="e.g. 2500"
                     value={formData.budget}
                     onChange={(e) => setFormData({ ...formData, budget: e.target.value })}
@@ -443,7 +537,7 @@ const TripsPage = () => {
                 </div>
 
                 <div className="form-group half-width">
-                  <label htmlFor="tripStatus">Status</label>
+                  <label htmlFor="tripStatus">Trip Status</label>
                   <select
                     id="tripStatus"
                     value={formData.status}
@@ -459,11 +553,11 @@ const TripsPage = () => {
               </div>
 
               <div className="form-group">
-                <label htmlFor="tripDesc">Notes / Description</label>
+                <label htmlFor="tripDesc">Notes / Overview</label>
                 <textarea
                   id="tripDesc"
                   rows={3}
-                  placeholder="Itinerary notes, flight details, activities to try..."
+                  placeholder="Flight information, hotel bookings, places you'd like to explore..."
                   value={formData.description}
                   onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                   className="form-input form-textarea"
