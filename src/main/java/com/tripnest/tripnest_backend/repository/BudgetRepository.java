@@ -19,4 +19,7 @@ public interface BudgetRepository extends JpaRepository<Budget, Long> {
     boolean existsByTripId(Long tripId);
 
     void deleteByTripId(Long tripId);
+
+    @Query("SELECT COALESCE(SUM(b.totalBudget), 0) FROM Budget b WHERE b.trip.user.id = :userId")
+    java.math.BigDecimal getTotalBudgetByUserId(@Param("userId") Long userId);
 }

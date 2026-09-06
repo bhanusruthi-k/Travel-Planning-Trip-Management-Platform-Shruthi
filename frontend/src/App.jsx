@@ -11,6 +11,8 @@ import DestinationsPage from './pages/DestinationsPage';
 import DestinationDetailsPage from './pages/DestinationDetailsPage';
 import TripsPage from './pages/TripsPage';
 import TripDetailsPage from './pages/TripDetailsPage';
+import TravelerDashboardPage from './pages/TravelerDashboardPage';
+import AdminDashboardPage from './pages/AdminDashboardPage';
 import './App.css';
 
 function App() {
@@ -28,6 +30,22 @@ function App() {
                   <Route path="/destinations/:id" element={<DestinationDetailsPage />} />
                   <Route path="/login" element={<LoginPage />} />
                   <Route path="/register" element={<RegisterPage />} />
+                  <Route
+                    path="/dashboard"
+                    element={
+                      <ProtectedRoute>
+                        <TravelerDashboardPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/admin/dashboard"
+                    element={
+                      <ProtectedRoute>
+                        <AdminDashboardPage />
+                      </ProtectedRoute>
+                    }
+                  />
                   <Route
                     path="/trips"
                     element={

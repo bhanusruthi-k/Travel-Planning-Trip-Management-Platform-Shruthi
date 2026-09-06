@@ -7,31 +7,37 @@ import com.tripnest.tripnest_backend.dto.expense.ExpenseResponseDTO;
 import com.tripnest.tripnest_backend.exception.BadRequestException;
 import com.tripnest.tripnest_backend.exception.ResourceNotFoundException;
 import com.tripnest.tripnest_backend.model.*;
-import com.tripnest.tripnest_backend.repository.BudgetRepository;
-import com.tripnest.tripnest_backend.repository.ExpenseRepository;
-import com.tripnest.tripnest_backend.repository.TripRepository;
-import com.tripnest.tripnest_backend.repository.UserRepository;
+import com.tripnest.tripnest_backend.repository.*;
 import com.tripnest.tripnest_backend.service.ExpenseService;
+import com.tripnest.tripnest_backend.service.NotificationService;
 import com.tripnest.tripnest_backend.service.TripAccessService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.LocalDateTime;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class ExpenseServiceImpl implements ExpenseService {
 
     private final ExpenseRepository expenseRepository;
     private final TripRepository tripRepository;
     private final BudgetRepository budgetRepository;
     private final UserRepository userRepository;
+    private final TripMembershipRepository tripMembershipRepository;
     private final TripAccessService tripAccessService;
+    private final NotificationService notificationService;
+    private final ReminderLogRepository reminderLogRepository;
 
     @Override
     @Transactional
@@ -63,7 +69,16 @@ public class ExpenseServiceImpl implements ExpenseService {
                 .payer(payer)
                 .build();
 
+        BigDecimal previousSpent = expenseRepository.getTotalSpentByTripId(tripId);
+        if (previousSpent == null) previousSpent = BigDecimal.ZERO;
+
         Expense saved = expenseRepository.save(expense);
+
+        BigDecimal newSpent = expenseRepository.getTotalSpentByTripId(tripId);
+        if (newSpent == null) newSpent = BigDecimal.ZERO;
+
+        checkAndNotifyBudgetThresholds(trip, previousSpent, newSpent);
+
         return mapToDTO(saved);
     }
 
@@ -121,7 +136,16 @@ public class ExpenseServiceImpl implements ExpenseService {
             budgetRepository.findByTripId(tripId).ifPresent(expense::setBudget);
         }
 
+        BigDecimal previousSpent = expenseRepository.getTotalSpentByTripId(tripId);
+        if (previousSpent == null) previousSpent = BigDecimal.ZERO;
+
         Expense updated = expenseRepository.save(expense);
+
+        BigDecimal newSpent = expenseRepository.getTotalSpentByTripId(tripId);
+        if (newSpent == null) newSpent = BigDecimal.ZERO;
+
+        checkAndNotifyBudgetThresholds(trip, previousSpent, newSpent);
+
         return mapToDTO(updated);
     }
 
@@ -135,7 +159,95 @@ public class ExpenseServiceImpl implements ExpenseService {
         Expense expense = expenseRepository.findByIdAndTripId(expenseId, tripId)
                 .orElseThrow(() -> new ResourceNotFoundException("Expense not found with id: " + expenseId + " for trip id: " + tripId));
 
+        BigDecimal previousSpent = expenseRepository.getTotalSpentByTripId(tripId);
+        if (previousSpent == null) previousSpent = BigDecimal.ZERO;
+
         expenseRepository.delete(expense);
+
+        BigDecimal newSpent = expenseRepository.getTotalSpentByTripId(tripId);
+        if (newSpent == null) newSpent = BigDecimal.ZERO;
+
+        checkAndNotifyBudgetThresholds(trip, previousSpent, newSpent);
+    }
+
+    private void checkAndNotifyBudgetThresholds(Trip trip, BigDecimal previousSpent, BigDecimal newSpent) {
+        Long tripId = trip.getId();
+        Optional<Budget> budgetOpt = budgetRepository.findByTripId(tripId);
+
+        BigDecimal totalBudget = BigDecimal.ZERO;
+        if (budgetOpt.isPresent() && budgetOpt.get().getTotalBudget() != null) {
+            totalBudget = budgetOpt.get().getTotalBudget();
+        } else if (trip.getBudget() != null && trip.getBudget() > 0) {
+            totalBudget = BigDecimal.valueOf(trip.getBudget());
+        }
+
+        if (totalBudget.compareTo(BigDecimal.ZERO) <= 0) {
+            return;
+        }
+
+        BigDecimal hundred = BigDecimal.valueOf(100);
+        BigDecimal eighty = BigDecimal.valueOf(80);
+
+        BigDecimal prevPercentage = previousSpent.multiply(hundred).divide(totalBudget, 2, RoundingMode.HALF_UP);
+        BigDecimal newPercentage = newSpent.multiply(hundred).divide(totalBudget, 2, RoundingMode.HALF_UP);
+
+        // Reset threshold alerts if spending drops below threshold (e.g., after expense reduction or deletion)
+        if (newPercentage.compareTo(eighty) < 0) {
+            reminderLogRepository.deleteByReminderTypeAndEntityId("BUDGET_ALERT_80", tripId);
+        }
+        if (newPercentage.compareTo(hundred) < 0) {
+            reminderLogRepository.deleteByReminderTypeAndEntityId("BUDGET_ALERT_100", tripId);
+        }
+
+        // Check 80% threshold crossing
+        if (newPercentage.compareTo(eighty) >= 0) {
+            boolean alreadySent80 = reminderLogRepository.existsByReminderTypeAndEntityId("BUDGET_ALERT_80", tripId);
+            if (!alreadySent80) {
+                String msg80 = "Your trip budget has reached 80% of the allocated amount.";
+                notifyParticipants(trip, msg80);
+                reminderLogRepository.save(ReminderLog.builder()
+                        .reminderType("BUDGET_ALERT_80")
+                        .entityId(tripId)
+                        .userId(0L) // Trip-level alert marker
+                        .reminderKey("80_PERCENT")
+                        .sentAt(LocalDateTime.now())
+                        .build());
+            }
+        }
+
+        // Check 100% threshold crossing
+        if (newPercentage.compareTo(hundred) >= 0) {
+            boolean alreadySent100 = reminderLogRepository.existsByReminderTypeAndEntityId("BUDGET_ALERT_100", tripId);
+            if (!alreadySent100) {
+                String msg100 = "Your trip budget has reached 100% of the allocated amount.";
+                notifyParticipants(trip, msg100);
+                reminderLogRepository.save(ReminderLog.builder()
+                        .reminderType("BUDGET_ALERT_100")
+                        .entityId(tripId)
+                        .userId(0L) // Trip-level alert marker
+                        .reminderKey("100_PERCENT")
+                        .sentAt(LocalDateTime.now())
+                        .build());
+            }
+        }
+    }
+
+    private void notifyParticipants(Trip trip, String message) {
+        Set<User> participants = new LinkedHashSet<>();
+        if (trip.getUser() != null) {
+            participants.add(trip.getUser());
+        }
+
+        List<TripMembership> memberships = tripMembershipRepository.findByTripIdWithUser(trip.getId());
+        for (TripMembership tm : memberships) {
+            if (tm.getUser() != null) {
+                participants.add(tm.getUser());
+            }
+        }
+
+        for (User user : participants) {
+            notificationService.createNotification(user, NotificationType.BUDGET_ALERT, message, false);
+        }
     }
 
     @Override

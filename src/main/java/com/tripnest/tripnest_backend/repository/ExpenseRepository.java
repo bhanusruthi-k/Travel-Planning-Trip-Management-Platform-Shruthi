@@ -44,4 +44,14 @@ public interface ExpenseRepository extends JpaRepository<Expense, Long> {
     BigDecimal getTotalSpentByTripId(@Param("tripId") Long tripId);
 
     long countByTripId(Long tripId);
+
+    @Query("SELECT new com.tripnest.tripnest_backend.dto.expense.CategoryExpenseSummaryDTO(e.category, SUM(e.amount), COUNT(e)) " +
+           "FROM Expense e WHERE e.trip.user.id = :userId GROUP BY e.category")
+    List<CategoryExpenseSummaryDTO> getCategorySummaryByUserId(@Param("userId") Long userId);
+
+    @Query("SELECT COALESCE(SUM(e.amount), 0) FROM Expense e WHERE e.trip.user.id = :userId")
+    BigDecimal getTotalSpentByUserId(@Param("userId") Long userId);
+
+    @Query("SELECT COALESCE(SUM(e.amount), 0) FROM Expense e")
+    BigDecimal getTotalPlatformExpenses();
 }

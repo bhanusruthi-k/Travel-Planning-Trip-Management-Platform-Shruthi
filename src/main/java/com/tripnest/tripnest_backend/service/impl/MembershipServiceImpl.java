@@ -30,6 +30,7 @@ public class MembershipServiceImpl implements MembershipService {
     private final TripMembershipRepository tripMembershipRepository;
     private final JoinRequestRepository joinRequestRepository;
     private final TripAccessService tripAccessService;
+    private final com.tripnest.tripnest_backend.service.NotificationService notificationService;
 
     @Override
     @Transactional
@@ -63,6 +64,15 @@ public class MembershipServiceImpl implements MembershipService {
                 .build();
 
         TripMembership saved = tripMembershipRepository.save(membership);
+
+        // Send notification to newly added user
+        notificationService.createNotification(
+                userToAdd,
+                NotificationType.MEMBER_ADDED,
+                "You have been added to the trip: " + trip.getTitle(),
+                true
+        );
+
         return mapToMemberDTO(saved);
     }
 
@@ -163,6 +173,15 @@ public class MembershipServiceImpl implements MembershipService {
                 .build();
 
         JoinRequest saved = joinRequestRepository.save(request);
+
+        // Notify trip owner about join request
+        notificationService.createNotification(
+                trip.getUser(),
+                NotificationType.JOIN_REQUEST_SUBMITTED,
+                requester.getFullName() + " requested to join your trip: " + trip.getTitle(),
+                true
+        );
+
         return mapToJoinRequestDTO(saved);
     }
 
@@ -206,6 +225,14 @@ public class MembershipServiceImpl implements MembershipService {
             tripMembershipRepository.save(membership);
         }
 
+        // Notify the requester that their join request was approved
+        notificationService.createNotification(
+                joinRequest.getUser(),
+                NotificationType.JOIN_REQUEST_APPROVED,
+                "Your request to join " + trip.getTitle() + " has been approved.",
+                true
+        );
+
         return mapToJoinRequestDTO(updated);
     }
 
@@ -226,6 +253,14 @@ public class MembershipServiceImpl implements MembershipService {
 
         joinRequest.setStatus(JoinRequestStatus.REJECTED);
         JoinRequest updated = joinRequestRepository.save(joinRequest);
+
+        // Notify the requester that their join request was rejected
+        notificationService.createNotification(
+                joinRequest.getUser(),
+                NotificationType.JOIN_REQUEST_REJECTED,
+                "Your request to join " + trip.getTitle() + " was rejected.",
+                true
+        );
 
         return mapToJoinRequestDTO(updated);
     }

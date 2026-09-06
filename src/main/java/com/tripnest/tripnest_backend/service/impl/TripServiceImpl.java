@@ -11,18 +11,24 @@ import com.tripnest.tripnest_backend.model.Role;
 import com.tripnest.tripnest_backend.model.Trip;
 import com.tripnest.tripnest_backend.model.TripStatus;
 import com.tripnest.tripnest_backend.model.User;
+import com.tripnest.tripnest_backend.model.NotificationType;
 import com.tripnest.tripnest_backend.repository.DestinationRepository;
 import com.tripnest.tripnest_backend.repository.JoinRequestRepository;
 import com.tripnest.tripnest_backend.repository.TripMembershipRepository;
 import com.tripnest.tripnest_backend.repository.TripRepository;
 import com.tripnest.tripnest_backend.repository.UserRepository;
+import com.tripnest.tripnest_backend.service.NotificationService;
 import com.tripnest.tripnest_backend.service.TripAccessService;
 import com.tripnest.tripnest_backend.service.TripService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @Service
@@ -35,6 +41,7 @@ public class TripServiceImpl implements TripService {
     private final TripMembershipRepository tripMembershipRepository;
     private final JoinRequestRepository joinRequestRepository;
     private final TripAccessService tripAccessService;
+    private final NotificationService notificationService;
 
     @Override
     @Transactional
@@ -108,10 +115,17 @@ public class TripServiceImpl implements TripService {
 
         tripAccessService.validateTripAccess(user, trip);
 
-        if (dto.getDestinationId() != null && !dto.getDestinationId().equals(trip.getDestination().getId())) {
-            Destination destination = destinationRepository.findById(dto.getDestinationId())
+        Destination oldDestination = trip.getDestination();
+        LocalDate oldStartDate = trip.getStartDate();
+        LocalDate oldEndDate = trip.getEndDate();
+
+        boolean destinationChanged = false;
+        Destination newDestination = oldDestination;
+        if (dto.getDestinationId() != null && (oldDestination == null || !dto.getDestinationId().equals(oldDestination.getId()))) {
+            newDestination = destinationRepository.findById(dto.getDestinationId())
                     .orElseThrow(() -> new ResourceNotFoundException("Destination not found with id: " + dto.getDestinationId()));
-            trip.setDestination(destination);
+            trip.setDestination(newDestination);
+            destinationChanged = true;
         }
 
         if (dto.getTitle() != null) {
@@ -120,11 +134,17 @@ public class TripServiceImpl implements TripService {
         if (dto.getDescription() != null) {
             trip.setDescription(dto.getDescription());
         }
-        if (dto.getStartDate() != null) {
+
+        boolean startDateChanged = false;
+        if (dto.getStartDate() != null && !dto.getStartDate().equals(oldStartDate)) {
             trip.setStartDate(dto.getStartDate());
+            startDateChanged = true;
         }
-        if (dto.getEndDate() != null) {
+
+        boolean endDateChanged = false;
+        if (dto.getEndDate() != null && !dto.getEndDate().equals(oldEndDate)) {
             trip.setEndDate(dto.getEndDate());
+            endDateChanged = true;
         }
 
         // Validate final dates after applying update
@@ -140,7 +160,49 @@ public class TripServiceImpl implements TripService {
         }
 
         Trip updatedTrip = tripRepository.save(trip);
+
+        // Send Travel Update notification if any core field changed
+        if (destinationChanged || startDateChanged || endDateChanged) {
+            notifyTripMembersOfUpdate(updatedTrip, user, destinationChanged, startDateChanged || endDateChanged, oldDestination, newDestination);
+        }
+
         return mapToDTO(updatedTrip);
+    }
+
+    private void notifyTripMembersOfUpdate(Trip trip, User updater, boolean destinationChanged, boolean datesChanged, Destination oldDest, Destination newDest) {
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("d MMM");
+        String message;
+
+        if (destinationChanged && datesChanged) {
+            String oldDestName = oldDest != null ? oldDest.getName() : "previous destination";
+            String newDestName = newDest != null ? newDest.getName() : "new destination";
+            message = String.format("Travel update for \"%s\": destination has changed from %s to %s, and trip dates have been updated to %s – %s.",
+                    trip.getTitle(), oldDestName, newDestName, trip.getStartDate().format(formatter), trip.getEndDate().format(formatter));
+        } else if (destinationChanged) {
+            String oldDestName = oldDest != null ? oldDest.getName() : "previous destination";
+            String newDestName = newDest != null ? newDest.getName() : "new destination";
+            message = String.format("Travel update: your trip destination has changed from %s to %s.", oldDestName, newDestName);
+        } else {
+            message = String.format("Travel update: your trip dates have been updated to %s – %s.",
+                    trip.getStartDate().format(formatter), trip.getEndDate().format(formatter));
+        }
+
+        Set<User> recipients = new LinkedHashSet<>();
+        // Include trip owner if the modifier is not the owner
+        if (trip.getUser() != null && !trip.getUser().getId().equals(updater.getId())) {
+            recipients.add(trip.getUser());
+        }
+
+        // Include all other members except the updater
+        tripMembershipRepository.findByTripIdWithUser(trip.getId()).forEach(tm -> {
+            if (tm.getUser() != null && !tm.getUser().getId().equals(updater.getId())) {
+                recipients.add(tm.getUser());
+            }
+        });
+
+        for (User recipient : recipients) {
+            notificationService.createNotification(recipient, NotificationType.TRIP_UPDATE, message, false);
+        }
     }
 
     @Override

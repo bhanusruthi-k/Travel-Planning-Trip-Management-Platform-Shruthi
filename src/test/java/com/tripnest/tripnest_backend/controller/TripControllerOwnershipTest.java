@@ -30,7 +30,9 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-@SpringBootTest
+import com.tripnest.tripnest_backend.TripnestBackendApplication;
+
+@SpringBootTest(classes = TripnestBackendApplication.class)
 public class TripControllerOwnershipTest {
 
     @Autowired

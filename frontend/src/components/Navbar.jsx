@@ -3,6 +3,7 @@ import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { useToast } from '../context/ToastContext';
+import NotificationDropdown from './NotificationDropdown';
 import {
   Compass,
   MapPin,
@@ -18,6 +19,7 @@ import {
   PlusCircle,
   Briefcase,
   Layers,
+  LayoutDashboard,
 } from 'lucide-react';
 
 const Navbar = () => {
@@ -27,7 +29,6 @@ const Navbar = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [showNotifications, setShowNotifications] = useState(false);
 
   const handleLogout = () => {
     logout();
@@ -66,6 +67,16 @@ const Navbar = () => {
 
           {/* Desktop Primary Navigation */}
           <nav className="navbar-nav-links" aria-label="Main Navigation">
+            {isAuthenticated && (
+              <Link
+                to="/dashboard"
+                className={`nav-link ${isActive('/dashboard') ? 'active' : ''}`}
+              >
+                <LayoutDashboard size={16} />
+                <span>Dashboard</span>
+              </Link>
+            )}
+
             <Link
               to="/destinations"
               className={`nav-link ${isActive('/destinations') ? 'active' : ''}`}
@@ -81,6 +92,16 @@ const Navbar = () => {
               >
                 <Briefcase size={16} />
                 <span>My Trips</span>
+              </Link>
+            )}
+
+            {isAuthenticated && user?.role === 'ADMINISTRATOR' && (
+              <Link
+                to="/admin/dashboard"
+                className={`nav-link admin-nav-link ${isActive('/admin/dashboard') ? 'active' : ''}`}
+              >
+                <Shield size={16} />
+                <span>Admin Panel</span>
               </Link>
             )}
           </nav>
@@ -106,37 +127,7 @@ const Navbar = () => {
           </button>
 
           {/* Notifications Trigger */}
-          {isAuthenticated && (
-            <div className="notification-wrapper">
-              <button
-                className="navbar-icon-btn"
-                onClick={() => setShowNotifications(!showNotifications)}
-                title="Notifications"
-                aria-label="Notifications"
-              >
-                <Bell size={17} />
-                <span className="notification-ping"></span>
-              </button>
-
-              {showNotifications && (
-                <div className="notification-dropdown">
-                  <div className="notification-header">
-                    <span className="notification-title">Activity & Alerts</span>
-                    <span className="notification-count">1 new</span>
-                  </div>
-                  <div className="notification-list">
-                    <div className="notification-item unread">
-                      <div className="notification-dot"></div>
-                      <div className="notification-content">
-                        <p className="notification-msg">Welcome to TripNest Planner!</p>
-                        <span className="notification-time">Ready to plan your next journey</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
+          {isAuthenticated && <NotificationDropdown />}
 
           {/* User Profile or Auth Links */}
           {isAuthenticated ? (
