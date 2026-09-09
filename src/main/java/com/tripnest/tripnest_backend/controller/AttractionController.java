@@ -2,6 +2,7 @@ package com.tripnest.tripnest_backend.controller;
 
 import com.tripnest.tripnest_backend.dto.destination.AttractionRequestDTO;
 import com.tripnest.tripnest_backend.dto.destination.AttractionResponseDTO;
+import com.tripnest.tripnest_backend.exception.BadRequestException;
 import com.tripnest.tripnest_backend.service.AttractionService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -13,24 +14,34 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 
 @RestController
-@RequestMapping("/api/destinations/{destinationId}/attractions")
 @RequiredArgsConstructor
 public class AttractionController {
 
     private final AttractionService attractionService;
 
-    @GetMapping
+    @GetMapping("/api/destinations/{destinationId}/attractions")
     public ResponseEntity<List<AttractionResponseDTO>> getAttractionsByDestination(@PathVariable Long destinationId) {
         List<AttractionResponseDTO> attractions = attractionService.getAttractionsByDestinationId(destinationId);
         return ResponseEntity.ok(attractions);
     }
 
-    @PostMapping
+    @PostMapping("/api/destinations/{destinationId}/attractions")
     @PreAuthorize("hasRole('ADMINISTRATOR')")
-    public ResponseEntity<AttractionResponseDTO> createAttraction(
+    public ResponseEntity<AttractionResponseDTO> createAttractionForDestination(
             @PathVariable Long destinationId,
             @Valid @RequestBody AttractionRequestDTO dto) {
         AttractionResponseDTO created = attractionService.createAttraction(destinationId, dto);
+        return new ResponseEntity<>(created, HttpStatus.CREATED);
+    }
+
+    @PostMapping("/api/attractions")
+    @PreAuthorize("hasRole('ADMINISTRATOR')")
+    public ResponseEntity<AttractionResponseDTO> createAttraction(
+            @Valid @RequestBody AttractionRequestDTO dto) {
+        if (dto.getDestinationId() == null) {
+            throw new BadRequestException("Destination ID is required to create an attraction.");
+        }
+        AttractionResponseDTO created = attractionService.createAttraction(dto.getDestinationId(), dto);
         return new ResponseEntity<>(created, HttpStatus.CREATED);
     }
 }

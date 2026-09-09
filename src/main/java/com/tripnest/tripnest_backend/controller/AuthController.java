@@ -25,6 +25,12 @@ public class AuthController {
         return new ResponseEntity<>(response, HttpStatus.CREATED);
     }
 
+    @PostMapping("/register-admin")
+    public ResponseEntity<AuthResponse> registerAdmin(@Valid @RequestBody RegisterRequest request) {
+        AuthResponse response = authService.registerAdmin(request);
+        return new ResponseEntity<>(response, HttpStatus.CREATED);
+    }
+
     @PostMapping("/login")
     public ResponseEntity<AuthResponse> login(@Valid @RequestBody LoginRequest request) {
         AuthResponse response = authService.login(request);
@@ -39,4 +45,14 @@ public class AuthController {
         UserDTO user = authService.getCurrentUser(authentication.getName());
         return ResponseEntity.ok(user);
     }
+
+    @DeleteMapping("/account")
+    public ResponseEntity<Void> deleteAccount(Authentication authentication) {
+        if (authentication == null || !authentication.isAuthenticated()) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+        }
+        authService.deleteAccount(authentication.getName());
+        return ResponseEntity.noContent().build();
+    }
 }
+

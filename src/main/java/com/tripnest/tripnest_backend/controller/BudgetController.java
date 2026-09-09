@@ -3,6 +3,7 @@ package com.tripnest.tripnest_backend.controller;
 import com.tripnest.tripnest_backend.dto.budget.BudgetRequestDTO;
 import com.tripnest.tripnest_backend.dto.budget.BudgetResponseDTO;
 import com.tripnest.tripnest_backend.service.BudgetService;
+import com.tripnest.tripnest_backend.service.ExpenseService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -16,6 +17,7 @@ import org.springframework.web.bind.annotation.*;
 public class BudgetController {
 
     private final BudgetService budgetService;
+    private final ExpenseService expenseService;
 
     @PostMapping
     public ResponseEntity<BudgetResponseDTO> createBudget(@PathVariable Long tripId,
@@ -38,6 +40,13 @@ public class BudgetController {
                                                        Authentication authentication) {
         BudgetResponseDTO response = budgetService.getBudgetByTripId(tripId, authentication.getName());
         return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/remaining")
+    public ResponseEntity<com.tripnest.tripnest_backend.dto.expense.BudgetExpenseSummaryDTO> getRemainingBudget(
+            @PathVariable Long tripId,
+            Authentication authentication) {
+        return ResponseEntity.ok(expenseService.getBudgetExpenseSummary(tripId, authentication.getName()));
     }
 
     @DeleteMapping

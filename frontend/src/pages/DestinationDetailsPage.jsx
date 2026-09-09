@@ -1,9 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { destinationApi } from '../api/destinationApi';
 import { useAuth } from '../context/AuthContext';
 import { getDestinationPhotos } from '../utils/destinationGalleries';
-import GalleryModal from '../components/GalleryModal';
 import {
   MapPin,
   Calendar,
@@ -18,11 +17,12 @@ import {
   Compass,
   DollarSign,
   Plus,
-  Images,
   Camera,
   CheckCircle2,
   Globe2,
   Info,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 
 const DestinationDetailsPage = () => {
@@ -33,9 +33,11 @@ const DestinationDetailsPage = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
-  // Gallery Modal
-  const [galleryOpen, setGalleryOpen] = useState(false);
-  const [galleryIndex, setGalleryIndex] = useState(0);
+  // Inline Image Gallery State
+  const [currentImageIndex, setCurrentImageIndex] = useState(0);
+
+  // Swipe handling state
+  const touchStartX = useRef(null);
 
   const { isAuthenticated } = useAuth();
   const navigate = useNavigate();
@@ -45,14 +47,28 @@ const DestinationDetailsPage = () => {
       setLoading(true);
       setError('');
       try {
-        const [destData, weatherData, placesData] = await Promise.all([
+        const [destData, weatherData, placesData, attractionsData] = await Promise.all([
           destinationApi.getDestinationById(id),
           destinationApi.getDestinationWeather(id).catch(() => null),
           destinationApi.getDestinationPlaces(id).catch(() => []),
+          destinationApi.getDestinationAttractions(id).catch(() => []),
         ]);
         setDestination(destData);
         setWeather(weatherData);
-        setPlaces(placesData || []);
+
+        // Combine backend attractions with places if available, prioritizing backend attractions
+        const combinedPlaces = [];
+        if (Array.isArray(attractionsData) && attractionsData.length > 0) {
+          combinedPlaces.push(...attractionsData);
+        }
+        if (Array.isArray(placesData) && placesData.length > 0) {
+          placesData.forEach((p) => {
+            if (!combinedPlaces.some((cp) => cp.name.toLowerCase() === p.name.toLowerCase())) {
+              combinedPlaces.push(p);
+            }
+          });
+        }
+        setPlaces(combinedPlaces);
       } catch (err) {
         console.error('Failed to load destination details:', err);
         setError('Destination details could not be retrieved.');
@@ -64,6 +80,51 @@ const DestinationDetailsPage = () => {
     fetchDetails();
   }, [id]);
 
+  const destinationPhotos = destination ? getDestinationPhotos(destination) : [];
+  const photoCount = destinationPhotos.length || 1;
+
+  const nextImage = useCallback(() => {
+    if (photoCount <= 1) return;
+    setCurrentImageIndex((prev) => (prev + 1) % photoCount);
+  }, [photoCount]);
+
+  const prevImage = useCallback(() => {
+    if (photoCount <= 1) return;
+    setCurrentImageIndex((prev) => (prev - 1 + photoCount) % photoCount);
+  }, [photoCount]);
+
+  // Keyboard arrow navigation
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'ArrowRight') {
+        nextImage();
+      } else if (e.key === 'ArrowLeft') {
+        prevImage();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [nextImage, prevImage]);
+
+  // Touch Swipe Handlers for mobile
+  const handleTouchStart = (e) => {
+    touchStartX.current = e.touches[0].clientX;
+  };
+
+  const handleTouchEnd = (e) => {
+    if (touchStartX.current === null) return;
+    const touchEndX = e.changedTouches[0].clientX;
+    const diff = touchStartX.current - touchEndX;
+    if (Math.abs(diff) > 45) {
+      if (diff > 0) {
+        nextImage();
+      } else {
+        prevImage();
+      }
+    }
+    touchStartX.current = null;
+  };
+
   const handlePlanTrip = () => {
     if (!isAuthenticated) {
       navigate('/login', { state: { from: { pathname: `/trips?destinationId=${id}&action=create` } } });
@@ -72,17 +133,20 @@ const DestinationDetailsPage = () => {
     }
   };
 
-  const openGalleryAt = (idx = 0) => {
-    setGalleryIndex(idx);
-    setGalleryOpen(true);
-  };
-
   const getWeatherIcon = (condition = '') => {
     const cond = condition.toLowerCase();
     if (cond.includes('rain') || cond.includes('shower')) return <CloudRain size={28} className="weather-icon-rain" />;
     if (cond.includes('snow')) return <CloudSnow size={28} className="weather-icon-snow" />;
     if (cond.includes('cloud')) return <CloudSun size={28} className="weather-icon-cloud" />;
     return <Sun size={28} className="weather-icon-sun" />;
+  };
+
+  const handleBack = () => {
+    if (window.history.state && window.history.state.idx > 0) {
+      navigate(-1);
+    } else {
+      navigate('/destinations');
+    }
   };
 
   if (loading) {
@@ -100,64 +164,71 @@ const DestinationDetailsPage = () => {
         <Compass size={44} className="empty-icon" />
         <h3>{error || 'Destination not found'}</h3>
         <p>The destination you requested may have been moved or removed from our directory.</p>
-        <Link to="/destinations" className="btn-back-link">
+        <button type="button" onClick={handleBack} className="btn-back-link">
           <ArrowLeft size={16} /> Back to Destinations
-        </Link>
+        </button>
       </div>
     );
   }
 
-  const destinationPhotos = getDestinationPhotos(destination);
+  const currentPhoto = destinationPhotos[currentImageIndex] || { url: destination.imageUrl };
 
   return (
     <div className="destinations-workspace-container">
       {/* 1. TOP BREADCRUMB & ACTION BAR */}
       <div className="details-top-nav">
-        <Link to="/destinations" className="btn-back-link">
-          <ArrowLeft size={16} /> Back to Destinations
-        </Link>
+        <button type="button" onClick={handleBack} className="btn-back-link">
+          <ArrowLeft size={16} /> Back
+        </button>
 
         <div className="details-top-actions">
-          <button
-            onClick={() => openGalleryAt(0)}
-            className="btn-secondary-action"
-            title="Browse all photos"
-          >
-            <Camera size={15} /> View Gallery ({destinationPhotos.length} Photos)
-          </button>
           <button onClick={handlePlanTrip} className="btn-primary-action">
             <Plus size={16} /> Plan a Trip to {destination.name}
           </button>
         </div>
       </div>
 
-      {/* 2. DESTINATION HERO BANNER WITH GALLERY TRIGGER */}
+      {/* 2. INLINE DESTINATION HERO BANNER WITH DIRECT ARROW NAVIGATION */}
       <section
-        className="dest-hero-banner clickable-hero"
-        onClick={() => openGalleryAt(0)}
-        title="Click anywhere to open full-screen photo gallery"
+        className="dest-hero-banner"
+        onTouchStart={handleTouchStart}
+        onTouchEnd={handleTouchEnd}
+        style={{ position: 'relative', overflow: 'hidden' }}
       >
         <div className="dest-hero-image-wrap">
           <img
-            src={destinationPhotos[0]?.url || destination.imageUrl}
-            alt={destination.name}
+            src={currentPhoto.url || destination.imageUrl}
+            alt={`${destination.name}, ${destination.country} photo ${currentImageIndex + 1}`}
             className="dest-hero-img"
-            onError={(e) => {
-              e.target.onerror = null;
-              e.target.src = 'https://images.unsplash.com/photo-1502602898657-3e91760cbb34?auto=format&fit=crop&w=1400&q=80';
-            }}
+            style={{ transition: 'all 0.35s ease-in-out' }}
           />
           <div className="dest-hero-overlay"></div>
 
-          <button
-            className="hero-gallery-badge-btn"
-            onClick={(e) => {
-              e.stopPropagation();
-              openGalleryAt(0);
-            }}
-          >
-            <Images size={15} /> Open Photo Gallery ({destinationPhotos.length} Photos)
-          </button>
+          {/* Left Arrow Button */}
+          {photoCount > 1 && (
+            <button
+              type="button"
+              className="gallery-arrow-btn prev-arrow"
+              onClick={prevImage}
+              aria-label="Previous photo"
+              title="Previous photo"
+            >
+              <ChevronLeft size={24} />
+            </button>
+          )}
+
+          {/* Right Arrow Button */}
+          {photoCount > 1 && (
+            <button
+              type="button"
+              className="gallery-arrow-btn next-arrow"
+              onClick={nextImage}
+              aria-label="Next photo"
+              title="Next photo"
+            >
+              <ChevronRight size={24} />
+            </button>
+          )}
         </div>
 
         <div className="dest-hero-content">
@@ -178,7 +249,23 @@ const DestinationDetailsPage = () => {
         </div>
       </section>
 
-      {/* 3. QUICK INFO RIBBON */}
+      {/* 3. INLINE GALLERY DOTS NAVIGATION */}
+      {photoCount > 1 && (
+        <div className="gallery-dots-bar" role="tablist" aria-label="Photo carousel navigation">
+          {destinationPhotos.map((_, idx) => (
+            <button
+              key={idx}
+              type="button"
+              onClick={() => setCurrentImageIndex(idx)}
+              className={`gallery-nav-dot ${idx === currentImageIndex ? 'active' : ''}`}
+              aria-label={`Show photo ${idx + 1} of ${photoCount}`}
+              title={`Photo ${idx + 1} of ${photoCount}`}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* 4. QUICK INFO RIBBON */}
       <section className="quick-info-ribbon">
         <div className="info-ribbon-card">
           <Globe2 size={18} className="ribbon-icon" />
@@ -217,7 +304,7 @@ const DestinationDetailsPage = () => {
         )}
       </section>
 
-      {/* 4. MAIN WORKSPACE CONTENT GRID (2/3 CONTENT + 1/3 SIDEBAR) */}
+      {/* 5. MAIN WORKSPACE CONTENT GRID (2/3 CONTENT + 1/3 SIDEBAR) */}
       <div className="details-content-grid">
         {/* Left Column: About & Attractions */}
         <div className="details-main-column">
@@ -257,7 +344,7 @@ const DestinationDetailsPage = () => {
                   <div key={idx} className="attraction-item-card">
                     <div className="attraction-photo-wrap">
                       <img
-                        src={place.imageUrl || destinationPhotos[(idx + 1) % destinationPhotos.length]?.url}
+                        src={place.imageUrl || destinationPhotos[(idx + 1) % destinationPhotos.length]?.url || destination.imageUrl}
                         alt={place.name}
                         className="attraction-photo"
                         loading="lazy"
@@ -346,15 +433,6 @@ const DestinationDetailsPage = () => {
           </div>
         </div>
       </div>
-
-      {/* 5. FULL-SCREEN GALLERY LIGHTBOX */}
-      <GalleryModal
-        isOpen={galleryOpen}
-        onClose={() => setGalleryOpen(false)}
-        destination={destination}
-        initialIndex={galleryIndex}
-        photos={destinationPhotos}
-      />
     </div>
   );
 };

@@ -59,4 +59,22 @@ public class MembershipController {
         MemberResponseDTO updated = membershipService.updateMemberRole(tripId, userId, dto, requesterEmail);
         return ResponseEntity.ok(updated);
     }
+
+    @PostMapping("/accept")
+    public ResponseEntity<MemberResponseDTO> acceptInvitation(
+            @PathVariable Long tripId,
+            Authentication authentication) {
+        String userEmail = authentication.getName();
+        MemberResponseDTO accepted = membershipService.acceptInvitation(tripId, userEmail);
+        return ResponseEntity.ok(accepted);
+    }
+
+    @PostMapping("/reject")
+    public ResponseEntity<Void> rejectInvitation(
+            @PathVariable Long tripId,
+            Authentication authentication) {
+        String userEmail = authentication.getName();
+        membershipService.rejectInvitation(tripId, userEmail);
+        return ResponseEntity.ok().build();
+    }
 }

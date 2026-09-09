@@ -11,6 +11,8 @@ import lombok.*;
 @Builder
 public class AttractionRequestDTO {
 
+    private Long destinationId;
+
     @NotBlank(message = "Attraction name is required")
     @Size(max = 150, message = "Attraction name cannot exceed 150 characters")
     private String name;

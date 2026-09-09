@@ -27,4 +27,9 @@ public interface JoinRequestRepository extends JpaRepository<JoinRequest, Long> 
     boolean existsByTripIdAndUserIdAndStatus(Long tripId, Long userId, JoinRequestStatus status);
 
     Optional<JoinRequest> findByTripIdAndUserIdAndStatus(Long tripId, Long userId, JoinRequestStatus status);
+
+    List<JoinRequest> findByUserId(Long userId);
+
+    void deleteByUserId(Long userId);
 }
+

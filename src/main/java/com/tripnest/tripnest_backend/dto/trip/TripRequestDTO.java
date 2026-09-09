@@ -33,4 +33,6 @@ public class TripRequestDTO {
     private Double budget;
 
     private TripStatus status;
+
+    private java.util.List<String> invitedEmails;
 }

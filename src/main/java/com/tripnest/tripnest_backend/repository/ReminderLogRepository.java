@@ -27,4 +27,9 @@ public interface ReminderLogRepository extends JpaRepository<ReminderLog, Long> 
     @Modifying
     @Query("DELETE FROM ReminderLog r WHERE r.reminderType = :reminderType AND r.entityId = :entityId")
     void deleteByReminderTypeAndEntityId(@Param("reminderType") String reminderType, @Param("entityId") Long entityId);
+
+    @Modifying
+    @Query("DELETE FROM ReminderLog r WHERE r.userId = :userId")
+    void deleteByUserId(@Param("userId") Long userId);
 }
+

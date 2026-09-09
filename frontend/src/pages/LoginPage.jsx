@@ -25,7 +25,12 @@ const LoginPage = () => {
     try {
       const user = await login(email, password);
       showToast(`Welcome back, ${user.fullName || user.email}!`, 'success');
-      navigate(from, { replace: true });
+      const targetPath = location.state?.from?.pathname;
+      const defaultDest = user.role === 'ADMINISTRATOR' ? '/admin/dashboard' : '/dashboard';
+      const destination = (!targetPath || targetPath === '/trips' || targetPath === '/login' || targetPath === '/')
+        ? defaultDest
+        : targetPath;
+      navigate(destination, { replace: true });
     } catch (err) {
       console.error('Login error:', err);
       const msg = err.response?.data?.message || 'Invalid email or password. Please try again.';

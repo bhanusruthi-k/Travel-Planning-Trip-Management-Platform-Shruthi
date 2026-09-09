@@ -27,8 +27,29 @@ public class User {
     @Column(name = "full_name")
     private String fullName;
 
+    @Column(name = "phone_number")
+    private String phoneNumber;
+
+    @Column(name = "date_of_birth")
+    private String dateOfBirth;
+
+    @Column(name = "gender")
+    private String gender;
+
+    @Column(name = "country")
+    private String country;
+
+    @Column(name = "city")
+    private String city;
+
+    @Column(name = "bio", length = 1000)
+    private String bio;
+
+    @Column(name = "profile_photo", length = 5000000)
+    private String profilePhoto;
+
     @Enumerated(EnumType.STRING)
-    @Column(nullable = false)
+    @Column(name = "role", nullable = false, length = 50)
     @Builder.Default
     private Role role = Role.TRAVELER;
 
@@ -52,3 +73,4 @@ public class User {
         this.updatedAt = LocalDateTime.now();
     }
 }
+

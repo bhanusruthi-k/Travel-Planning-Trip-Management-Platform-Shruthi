@@ -18,6 +18,10 @@ public class DestinationResponseDTO {
     private String description;
     private String imageUrl;
     private String category;
+    private String region;
     private Double averageCost;
+    private Boolean isPopular;
+    private Boolean isActive;
     private LocalDateTime createdAt;
 }
+

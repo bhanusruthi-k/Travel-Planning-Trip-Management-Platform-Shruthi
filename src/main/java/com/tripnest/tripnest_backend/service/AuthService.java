@@ -7,6 +7,9 @@ import com.tripnest.tripnest_backend.dto.auth.UserDTO;
 
 public interface AuthService {
     AuthResponse register(RegisterRequest request);
+    AuthResponse registerAdmin(RegisterRequest request);
     AuthResponse login(LoginRequest request);
     UserDTO getCurrentUser(String email);
+    void deleteAccount(String email);
 }
+

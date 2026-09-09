@@ -23,11 +23,12 @@ export const ThemeProvider = ({ children }) => {
   };
 
   return (
-    <ThemeContext.Provider value={{ theme, toggleTheme, isDark: theme === 'dark' }}>
+    <ThemeContext.Provider value={{ theme, setTheme, toggleTheme, isDark: theme === 'dark' }}>
       {children}
     </ThemeContext.Provider>
   );
 };
+
 
 export const useTheme = () => {
   const context = useContext(ThemeContext);

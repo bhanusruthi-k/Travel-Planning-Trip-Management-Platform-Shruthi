@@ -11,6 +11,8 @@ public interface NotificationService {
 
     NotificationResponseDTO createNotification(User user, NotificationType type, String message, boolean sendEmail);
 
+    NotificationResponseDTO createNotification(User user, NotificationType type, String message, Long tripId, boolean sendEmail);
+
     List<NotificationResponseDTO> getUserNotifications(String userEmail);
 
     UnreadCountResponseDTO getUnreadNotificationCount(String userEmail);

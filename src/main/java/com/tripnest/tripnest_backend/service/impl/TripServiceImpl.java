@@ -5,13 +5,9 @@ import com.tripnest.tripnest_backend.dto.destination.DestinationResponseDTO;
 import com.tripnest.tripnest_backend.dto.trip.TripRequestDTO;
 import com.tripnest.tripnest_backend.dto.trip.TripResponseDTO;
 import com.tripnest.tripnest_backend.exception.BadRequestException;
+import com.tripnest.tripnest_backend.exception.ForbiddenException;
 import com.tripnest.tripnest_backend.exception.ResourceNotFoundException;
-import com.tripnest.tripnest_backend.model.Destination;
-import com.tripnest.tripnest_backend.model.Role;
-import com.tripnest.tripnest_backend.model.Trip;
-import com.tripnest.tripnest_backend.model.TripStatus;
-import com.tripnest.tripnest_backend.model.User;
-import com.tripnest.tripnest_backend.model.NotificationType;
+import com.tripnest.tripnest_backend.model.*;
 import com.tripnest.tripnest_backend.repository.DestinationRepository;
 import com.tripnest.tripnest_backend.repository.JoinRequestRepository;
 import com.tripnest.tripnest_backend.repository.TripMembershipRepository;
@@ -21,17 +17,22 @@ import com.tripnest.tripnest_backend.service.NotificationService;
 import com.tripnest.tripnest_backend.service.TripAccessService;
 import com.tripnest.tripnest_backend.service.TripService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 @Service
+@Slf4j
 @RequiredArgsConstructor
 public class TripServiceImpl implements TripService {
 
@@ -40,8 +41,15 @@ public class TripServiceImpl implements TripService {
     private final DestinationRepository destinationRepository;
     private final TripMembershipRepository tripMembershipRepository;
     private final JoinRequestRepository joinRequestRepository;
+    private final com.tripnest.tripnest_backend.repository.ExpenseRepository expenseRepository;
+    private final com.tripnest.tripnest_backend.repository.BudgetRepository budgetRepository;
+    private final com.tripnest.tripnest_backend.repository.ItineraryDayRepository itineraryDayRepository;
+    private final com.tripnest.tripnest_backend.repository.ActivityRepository activityRepository;
+    private final com.tripnest.tripnest_backend.repository.ReminderLogRepository reminderLogRepository;
     private final TripAccessService tripAccessService;
     private final NotificationService notificationService;
+    private final com.tripnest.tripnest_backend.service.EmailService emailService;
+    private final PasswordEncoder passwordEncoder;
 
     @Override
     @Transactional
@@ -49,16 +57,17 @@ public class TripServiceImpl implements TripService {
         User user = userRepository.findByEmail(userEmail)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found with email: " + userEmail));
 
+        if (user.getRole() == Role.ADMINISTRATOR) {
+            throw new BadRequestException("Administrators cannot create personal trips.");
+        }
+
+        validateTripDates(dto.getStartDate(), dto.getEndDate());
+
         Destination destination = destinationRepository.findById(dto.getDestinationId())
                 .orElseThrow(() -> new ResourceNotFoundException("Destination not found with id: " + dto.getDestinationId()));
 
-        if (dto.getEndDate() != null && dto.getStartDate() != null
-                && dto.getEndDate().isBefore(dto.getStartDate())) {
-            throw new BadRequestException("End date must not be before start date.");
-        }
-
         Trip trip = Trip.builder()
-                .title(dto.getTitle())
+                .title(dto.getTitle().trim())
                 .description(dto.getDescription())
                 .startDate(dto.getStartDate())
                 .endDate(dto.getEndDate())
@@ -69,6 +78,73 @@ public class TripServiceImpl implements TripService {
                 .build();
 
         Trip savedTrip = tripRepository.save(trip);
+        log.info("[TripNest] Trip [{}] (ID: {}) successfully created by owner [{}]", savedTrip.getTitle(), savedTrip.getId(), userEmail);
+
+        if (dto.getInvitedEmails() != null && !dto.getInvitedEmails().isEmpty()) {
+            String destinationName = destination.getName();
+            String dates = (savedTrip.getStartDate() != null && savedTrip.getEndDate() != null)
+                    ? (savedTrip.getStartDate() + " – " + savedTrip.getEndDate())
+                    : "Upcoming Dates";
+
+            for (String rawEmail : dto.getInvitedEmails()) {
+                if (rawEmail == null || rawEmail.trim().isBlank()) continue;
+                String email = rawEmail.trim().toLowerCase();
+                if (email.equalsIgnoreCase(userEmail)) continue;
+
+                log.info("[TripNest] Processing invitation for [{}] on newly created trip [{}]", email, savedTrip.getTitle());
+
+                User userToAdd = userRepository.findByEmail(email)
+                        .orElseGet(() -> {
+                            log.info("[TripNest] Recipient [{}] is not yet registered. Creating invited traveler placeholder account.", email);
+                            String tempName = email.contains("@") ? email.split("@")[0] : "Invited Traveler";
+                            if (!tempName.isEmpty()) {
+                                tempName = Character.toUpperCase(tempName.charAt(0)) + (tempName.length() > 1 ? tempName.substring(1) : "");
+                            }
+                            User newUser = User.builder()
+                                    .email(email)
+                                    .password(passwordEncoder.encode(UUID.randomUUID().toString()))
+                                    .fullName(tempName)
+                                    .role(Role.TRAVELER)
+                                    .createdAt(LocalDateTime.now())
+                                    .updatedAt(LocalDateTime.now())
+                                    .build();
+                            return userRepository.save(newUser);
+                        });
+
+                if (!tripMembershipRepository.existsByTripIdAndUserId(savedTrip.getId(), userToAdd.getId())) {
+                    // Create pending invitation (JoinRequest) instead of adding as member immediately
+                    JoinRequest invitation = joinRequestRepository.findByTripIdAndUserIdAndStatus(savedTrip.getId(), userToAdd.getId(), JoinRequestStatus.PENDING)
+                            .orElseGet(() -> JoinRequest.builder()
+                                    .trip(savedTrip)
+                                    .user(userToAdd)
+                                    .status(JoinRequestStatus.PENDING)
+                                    .build());
+                    invitation.setStatus(JoinRequestStatus.PENDING);
+                    joinRequestRepository.save(invitation);
+
+                    notificationService.createNotification(
+                            userToAdd,
+                            NotificationType.TRIP_INVITATION,
+                            "You have been invited to join the trip: " + savedTrip.getTitle(),
+                            savedTrip.getId(),
+                            false
+                    );
+
+                    log.info("[TripNest] Sending invitation email to [{}] for trip [{}]...", userToAdd.getEmail(), savedTrip.getTitle());
+                    boolean sent = emailService.sendInvitationEmail(
+                            userToAdd.getEmail(),
+                            userToAdd.getFullName(),
+                            user.getFullName(),
+                            savedTrip.getTitle(),
+                            destinationName,
+                            dates,
+                            savedTrip.getId()
+                    );
+                    log.info("[TripNest] Invitation email dispatch finished for [{}]. SMTP Accepted: {}", userToAdd.getEmail(), sent);
+                }
+            }
+        }
+
         return mapToDTO(savedTrip);
     }
 
@@ -205,6 +281,12 @@ public class TripServiceImpl implements TripService {
         }
     }
 
+    private void validateTripDates(LocalDate startDate, LocalDate endDate) {
+        if (startDate != null && endDate != null && endDate.isBefore(startDate)) {
+            throw new BadRequestException("End date must not be before start date.");
+        }
+    }
+
     @Override
     @Transactional
     public void deleteTrip(Long id, String userEmail) {
@@ -216,10 +298,32 @@ public class TripServiceImpl implements TripService {
 
         tripAccessService.validateTripDelete(user, trip);
 
+        expenseRepository.deleteByTripId(trip.getId());
+        budgetRepository.deleteByTripId(trip.getId());
+        activityRepository.deleteByTripId(trip.getId());
+        itineraryDayRepository.deleteByTripId(trip.getId());
+
         tripMembershipRepository.deleteByTripId(trip.getId());
         joinRequestRepository.deleteByTripId(trip.getId());
 
+        reminderLogRepository.deleteByReminderTypeAndEntityId("TRIP_START", trip.getId());
+        reminderLogRepository.deleteByReminderTypeAndEntityId("BUDGET_THRESHOLD_80", trip.getId());
+        reminderLogRepository.deleteByReminderTypeAndEntityId("BUDGET_THRESHOLD_100", trip.getId());
+
         tripRepository.delete(trip);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<TripResponseDTO> searchTrips(String query) {
+        if (query == null || query.trim().isBlank()) {
+            return tripRepository.findAllWithDetails().stream()
+                    .map(this::mapToDTO)
+                    .collect(Collectors.toList());
+        }
+        return tripRepository.searchTrips(query.trim()).stream()
+                .map(this::mapToDTO)
+                .collect(Collectors.toList());
     }
 
     public TripResponseDTO mapToDTO(Trip trip) {

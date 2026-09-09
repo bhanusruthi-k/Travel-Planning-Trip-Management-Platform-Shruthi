@@ -32,6 +32,16 @@ public enum ExpenseCategory {
                 return b;
             }
         }
+        String clean = text.trim().toLowerCase();
+        if (clean.equals("activities") || clean.equals("activity")) {
+            return ENTERTAINMENT;
+        }
+        if (clean.equals("flights") || clean.equals("flight") || clean.equals("local travel") || clean.equals("travel")) {
+            return TRANSPORTATION;
+        }
+        if (clean.equals("other") || clean.equals("others")) {
+            return MISCELLANEOUS;
+        }
         return MISCELLANEOUS;
     }
 }

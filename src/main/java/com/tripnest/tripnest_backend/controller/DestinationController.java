@@ -22,8 +22,21 @@ public class DestinationController {
     private final DestinationService destinationService;
 
     @GetMapping
-    public ResponseEntity<List<DestinationResponseDTO>> getAllDestinations() {
-        List<DestinationResponseDTO> destinations = destinationService.getAllDestinations();
+    public ResponseEntity<List<DestinationResponseDTO>> getAllDestinations(
+            @RequestParam(required = false) String category,
+            @RequestParam(required = false) Boolean popular,
+            @RequestParam(required = false) String search) {
+        List<DestinationResponseDTO> destinations = destinationService.getAllDestinations(category, popular, search);
+        return ResponseEntity.ok(destinations);
+    }
+
+    @GetMapping("/search")
+    public ResponseEntity<List<DestinationResponseDTO>> searchDestinations(
+            @RequestParam(required = false) String name,
+            @RequestParam(required = false) String query,
+            @RequestParam(required = false) String search) {
+        String searchTerm = name != null ? name : (query != null ? query : search);
+        List<DestinationResponseDTO> destinations = destinationService.getAllDestinations(null, null, searchTerm);
         return ResponseEntity.ok(destinations);
     }
 
@@ -57,4 +70,21 @@ public class DestinationController {
         DestinationResponseDTO created = destinationService.createDestination(dto);
         return new ResponseEntity<>(created, HttpStatus.CREATED);
     }
+
+    @PutMapping("/{id}")
+    @PreAuthorize("hasAnyRole('ADMINISTRATOR', 'GROUP_ADMIN')")
+    public ResponseEntity<DestinationResponseDTO> updateDestination(
+            @PathVariable Long id,
+            @Valid @RequestBody DestinationRequestDTO dto) {
+        DestinationResponseDTO updated = destinationService.updateDestination(id, dto);
+        return ResponseEntity.ok(updated);
+    }
+
+    @DeleteMapping("/{id}")
+    @PreAuthorize("hasAnyRole('ADMINISTRATOR', 'GROUP_ADMIN')")
+    public ResponseEntity<Void> deleteDestination(@PathVariable Long id) {
+        destinationService.deleteDestination(id);
+        return ResponseEntity.noContent().build();
+    }
 }
+

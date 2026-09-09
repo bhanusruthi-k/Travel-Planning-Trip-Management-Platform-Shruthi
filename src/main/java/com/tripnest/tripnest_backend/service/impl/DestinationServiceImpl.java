@@ -4,6 +4,7 @@ import com.tripnest.tripnest_backend.dto.destination.DestinationRequestDTO;
 import com.tripnest.tripnest_backend.dto.destination.DestinationResponseDTO;
 import com.tripnest.tripnest_backend.dto.destination.PlaceDTO;
 import com.tripnest.tripnest_backend.dto.destination.WeatherResponseDTO;
+import com.tripnest.tripnest_backend.exception.BadRequestException;
 import com.tripnest.tripnest_backend.exception.ResourceNotFoundException;
 import com.tripnest.tripnest_backend.model.Destination;
 import com.tripnest.tripnest_backend.repository.DestinationRepository;
@@ -24,8 +25,17 @@ public class DestinationServiceImpl implements DestinationService {
 
     @Override
     @Transactional(readOnly = true)
-    public List<DestinationResponseDTO> getAllDestinations() {
-        return destinationRepository.findAll().stream()
+    public List<DestinationResponseDTO> getAllDestinations(String category, Boolean popular, String search) {
+        List<Destination> list;
+        if (Boolean.TRUE.equals(popular)) {
+            list = destinationRepository.findByIsPopularTrueAndIsActiveTrue();
+        } else if ((category != null && !category.isEmpty()) || (search != null && !search.isEmpty())) {
+            list = destinationRepository.searchDestinations(category, search);
+        } else {
+            list = destinationRepository.findByIsActiveTrue();
+        }
+
+        return list.stream()
                 .map(this::mapToDTO)
                 .collect(Collectors.toList());
     }
@@ -33,8 +43,11 @@ public class DestinationServiceImpl implements DestinationService {
     @Override
     @Transactional(readOnly = true)
     public List<DestinationResponseDTO> getPopularDestinations() {
-        return destinationRepository.findAll().stream()
-                .limit(4)
+        List<Destination> popular = destinationRepository.findByIsPopularTrueAndIsActiveTrue();
+        if (popular.isEmpty()) {
+            popular = destinationRepository.findByIsActiveTrue().stream().limit(6).collect(Collectors.toList());
+        }
+        return popular.stream()
                 .map(this::mapToDTO)
                 .collect(Collectors.toList());
     }
@@ -50,18 +63,65 @@ public class DestinationServiceImpl implements DestinationService {
     @Override
     @Transactional
     public DestinationResponseDTO createDestination(DestinationRequestDTO dto) {
+        if (dto.getName() != null && dto.getCountry() != null &&
+                destinationRepository.existsByNameIgnoreCaseAndCountryIgnoreCase(dto.getName().trim(), dto.getCountry().trim())) {
+            throw new BadRequestException("A destination with the name '" + dto.getName() + "' in '" + dto.getCountry() + "' already exists.");
+        }
+
         Destination destination = Destination.builder()
-                .name(dto.getName())
-                .country(dto.getCountry())
+                .name(dto.getName() != null ? dto.getName().trim() : null)
+                .country(dto.getCountry() != null ? dto.getCountry().trim() : null)
+                .region(dto.getRegion())
                 .description(dto.getDescription())
                 .imageUrl(dto.getImageUrl())
                 .category(dto.getCategory())
                 .averageCost(dto.getAverageCost())
+                .isPopular(dto.getIsPopular() != null ? dto.getIsPopular() : false)
+                .isActive(dto.getIsActive() != null ? dto.getIsActive() : true)
                 .build();
 
         Destination saved = destinationRepository.save(destination);
         return mapToDTO(saved);
     }
+
+    @Override
+    @Transactional
+    public DestinationResponseDTO updateDestination(Long id, DestinationRequestDTO dto) {
+        Destination destination = destinationRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Destination not found with id: " + id));
+
+        if (dto.getName() != null && dto.getCountry() != null) {
+            destinationRepository.findByNameIgnoreCaseAndCountryIgnoreCase(dto.getName().trim(), dto.getCountry().trim())
+                    .ifPresent(existing -> {
+                        if (!existing.getId().equals(id)) {
+                            throw new BadRequestException("Another destination with name '" + dto.getName() + "' in '" + dto.getCountry() + "' already exists.");
+                        }
+                    });
+        }
+
+        if (dto.getName() != null) destination.setName(dto.getName().trim());
+        if (dto.getCountry() != null) destination.setCountry(dto.getCountry().trim());
+        if (dto.getRegion() != null) destination.setRegion(dto.getRegion());
+        if (dto.getDescription() != null) destination.setDescription(dto.getDescription());
+        if (dto.getImageUrl() != null) destination.setImageUrl(dto.getImageUrl());
+        if (dto.getCategory() != null) destination.setCategory(dto.getCategory());
+        if (dto.getAverageCost() != null) destination.setAverageCost(dto.getAverageCost());
+        if (dto.getIsPopular() != null) destination.setIsPopular(dto.getIsPopular());
+        if (dto.getIsActive() != null) destination.setIsActive(dto.getIsActive());
+
+        Destination updated = destinationRepository.save(destination);
+        return mapToDTO(updated);
+    }
+
+    @Override
+    @Transactional
+    public void deleteDestination(Long id) {
+        Destination destination = destinationRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Destination not found with id: " + id));
+        destination.setIsActive(false);
+        destinationRepository.save(destination);
+    }
+
 
     @Override
     @Transactional(readOnly = true)
@@ -220,11 +280,15 @@ public class DestinationServiceImpl implements DestinationService {
                 .id(destination.getId())
                 .name(destination.getName())
                 .country(destination.getCountry())
+                .region(destination.getRegion())
                 .description(destination.getDescription())
                 .imageUrl(destination.getImageUrl())
                 .category(destination.getCategory())
                 .averageCost(destination.getAverageCost())
+                .isPopular(destination.getIsPopular() != null ? destination.getIsPopular() : false)
+                .isActive(destination.getIsActive() != null ? destination.getIsActive() : true)
                 .createdAt(destination.getCreatedAt())
                 .build();
     }
 }
+

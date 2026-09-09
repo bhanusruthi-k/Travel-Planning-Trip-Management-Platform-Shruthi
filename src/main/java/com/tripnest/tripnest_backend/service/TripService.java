@@ -11,4 +11,5 @@ public interface TripService {
     TripResponseDTO getTripById(Long id, String userEmail);
     TripResponseDTO updateTrip(Long id, TripRequestDTO dto, String userEmail);
     void deleteTrip(Long id, String userEmail);
+    List<TripResponseDTO> searchTrips(String query);
 }

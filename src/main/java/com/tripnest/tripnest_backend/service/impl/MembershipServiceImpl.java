@@ -14,14 +14,20 @@ import com.tripnest.tripnest_backend.repository.UserRepository;
 import com.tripnest.tripnest_backend.service.MembershipService;
 import com.tripnest.tripnest_backend.service.TripAccessService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 @Service
+@Slf4j
 @RequiredArgsConstructor
 public class MembershipServiceImpl implements MembershipService {
 
@@ -29,8 +35,11 @@ public class MembershipServiceImpl implements MembershipService {
     private final UserRepository userRepository;
     private final TripMembershipRepository tripMembershipRepository;
     private final JoinRequestRepository joinRequestRepository;
+    private final com.tripnest.tripnest_backend.repository.NotificationRepository notificationRepository;
     private final TripAccessService tripAccessService;
     private final com.tripnest.tripnest_backend.service.NotificationService notificationService;
+    private final com.tripnest.tripnest_backend.service.EmailService emailService;
+    private final PasswordEncoder passwordEncoder;
 
     @Override
     @Transactional
@@ -44,8 +53,26 @@ public class MembershipServiceImpl implements MembershipService {
             throw new BadRequestException("Email is required.");
         }
 
-        User userToAdd = userRepository.findByEmail(dto.getEmail().trim().toLowerCase())
-                .orElseThrow(() -> new ResourceNotFoundException("User not found with email: " + dto.getEmail()));
+        String cleanEmail = dto.getEmail().trim().toLowerCase();
+        log.info("[TRIPNEST INVITATION] Creating invitation for: {}", cleanEmail);
+
+        User userToAdd = userRepository.findByEmail(cleanEmail)
+                .orElseGet(() -> {
+                    log.info("[TripNest] Recipient [{}] is not yet registered. Creating invited traveler placeholder account.", cleanEmail);
+                    String tempName = cleanEmail.contains("@") ? cleanEmail.split("@")[0] : "Invited Traveler";
+                    if (!tempName.isEmpty()) {
+                        tempName = Character.toUpperCase(tempName.charAt(0)) + (tempName.length() > 1 ? tempName.substring(1) : "");
+                    }
+                    User newUser = User.builder()
+                            .email(cleanEmail)
+                            .password(passwordEncoder.encode(UUID.randomUUID().toString()))
+                            .fullName(tempName)
+                            .role(Role.TRAVELER)
+                            .createdAt(LocalDateTime.now())
+                            .updatedAt(LocalDateTime.now())
+                            .build();
+                    return userRepository.save(newUser);
+                });
 
         if (trip.getUser().getId().equals(userToAdd.getId())) {
             throw new BadRequestException("The trip owner cannot be added as a regular member.");
@@ -55,25 +82,59 @@ public class MembershipServiceImpl implements MembershipService {
             throw new BadRequestException("User is already a member of this trip.");
         }
 
-        MemberRole role = dto.getRole() != null ? dto.getRole() : MemberRole.MEMBER;
+        if (joinRequestRepository.existsByTripIdAndUserIdAndStatus(tripId, userToAdd.getId(), JoinRequestStatus.PENDING)) {
+            throw new BadRequestException("An invitation is already pending for this user.");
+        }
 
-        TripMembership membership = TripMembership.builder()
-                .trip(trip)
-                .user(userToAdd)
-                .memberRole(role)
-                .build();
+        log.info("[TripNest] Creating pending invitation for user [{}] on trip [{}]", userToAdd.getEmail(), trip.getTitle());
 
-        TripMembership saved = tripMembershipRepository.save(membership);
+        // Create or update JoinRequest with PENDING status
+        JoinRequest invitation = joinRequestRepository.findByTripIdAndUserIdAndStatus(tripId, userToAdd.getId(), JoinRequestStatus.PENDING)
+                .orElseGet(() -> JoinRequest.builder()
+                        .trip(trip)
+                        .user(userToAdd)
+                        .status(JoinRequestStatus.PENDING)
+                        .build());
+        invitation.setStatus(JoinRequestStatus.PENDING);
+        joinRequestRepository.save(invitation);
 
-        // Send notification to newly added user
+        // Send in-app notification to invited user
         notificationService.createNotification(
                 userToAdd,
-                NotificationType.MEMBER_ADDED,
-                "You have been added to the trip: " + trip.getTitle(),
-                true
+                NotificationType.TRIP_INVITATION,
+                "You have been invited to join the trip: " + trip.getTitle(),
+                trip.getId(),
+                false
         );
 
-        return mapToMemberDTO(saved);
+        // Send dedicated invitation email
+        String destinationName = trip.getDestination() != null ? trip.getDestination().getName() : "Custom Destination";
+        String dates = (trip.getStartDate() != null && trip.getEndDate() != null)
+                ? (trip.getStartDate() + " – " + trip.getEndDate())
+                : "Upcoming Dates";
+
+        log.info("[TRIPNEST EMAIL] Attempting to send invitation to: {}", userToAdd.getEmail());
+        boolean emailSent = emailService.sendInvitationEmail(
+                userToAdd.getEmail(),
+                userToAdd.getFullName(),
+                requester.getFullName(),
+                trip.getTitle(),
+                destinationName,
+                dates,
+                trip.getId()
+        );
+        log.info("[TripNest] Invitation email dispatch finished for [{}]. SMTP Accepted: {}", userToAdd.getEmail(), emailSent);
+
+        MemberResponseDTO dtoResponse = MemberResponseDTO.builder()
+                .id(null)
+                .userId(userToAdd.getId())
+                .fullName(userToAdd.getFullName())
+                .email(userToAdd.getEmail())
+                .role("PENDING_INVITATION")
+                .joinedAt(LocalDateTime.now())
+                .emailDelivered(emailSent)
+                .build();
+        return dtoResponse;
     }
 
     @Override
@@ -263,6 +324,127 @@ public class MembershipServiceImpl implements MembershipService {
         );
 
         return mapToJoinRequestDTO(updated);
+    }
+
+    @Override
+    @Transactional
+    public MemberResponseDTO acceptInvitation(Long tripId, String userEmail) {
+        User user = getUser(userEmail);
+        Trip trip = getTrip(tripId);
+
+        if (trip.getUser().getId().equals(user.getId())) {
+            throw new BadRequestException("The trip owner cannot accept an invitation to their own trip.");
+        }
+
+        // 1. Validate that the invitation exists and is PENDING for this user
+        List<JoinRequest> pendingInvitations = joinRequestRepository.findByTripIdAndStatus(tripId, JoinRequestStatus.PENDING)
+                .stream()
+                .filter(jr -> jr.getUser().getId().equals(user.getId()))
+                .collect(Collectors.toList());
+
+        if (pendingInvitations.isEmpty()) {
+            // Check if already accepted / member
+            Optional<TripMembership> existingMembership = tripMembershipRepository.findByTripIdAndUserId(tripId, user.getId());
+            if (existingMembership.isPresent()) {
+                return mapToMemberDTO(existingMembership.get());
+            }
+            throw new BadRequestException("No pending invitation found for this trip.");
+        }
+
+        // 2. Mark invitation as APPROVED
+        for (JoinRequest jr : pendingInvitations) {
+            jr.setStatus(JoinRequestStatus.APPROVED);
+            joinRequestRepository.save(jr);
+        }
+
+        // 3. Create trip membership if not already existing
+        Optional<TripMembership> existing = tripMembershipRepository.findByTripIdAndUserId(tripId, user.getId());
+        TripMembership membership;
+        if (existing.isPresent()) {
+            membership = existing.get();
+        } else {
+            membership = TripMembership.builder()
+                    .trip(trip)
+                    .user(user)
+                    .memberRole(MemberRole.MEMBER)
+                    .build();
+            membership = tripMembershipRepository.save(membership);
+        }
+
+        // 4. Mark related invitation notifications as read
+        List<Notification> userNotifs = notificationRepository.findByUserIdOrderByIdDesc(user.getId());
+        for (Notification n : userNotifs) {
+            if ((n.getNotifType() == NotificationType.TRIP_INVITATION || n.getNotifType() == NotificationType.MEMBER_ADDED) &&
+                    (tripId.equals(n.getTripId()) || (n.getMessage() != null && n.getMessage().contains(trip.getTitle())))) {
+                n.setRead(true);
+                notificationRepository.save(n);
+            }
+        }
+
+        // 5. Notify trip owner
+        if (trip.getUser() != null && !trip.getUser().getId().equals(user.getId())) {
+            String inviterMessage = (user.getFullName() != null && !user.getFullName().isBlank() ? user.getFullName() : user.getEmail())
+                    + " accepted your invitation to join the trip: " + trip.getTitle();
+            notificationService.createNotification(
+                    trip.getUser(),
+                    NotificationType.INVITATION_ACCEPTED,
+                    inviterMessage,
+                    trip.getId(),
+                    true
+            );
+        }
+
+        return mapToMemberDTO(membership);
+    }
+
+    @Override
+    @Transactional
+    public void rejectInvitation(Long tripId, String userEmail) {
+        User user = getUser(userEmail);
+        Trip trip = getTrip(tripId);
+
+        if (trip.getUser().getId().equals(user.getId())) {
+            throw new BadRequestException("The trip owner cannot reject an invitation.");
+        }
+
+        // 1. Validate that the invitation exists and is PENDING for this user
+        List<JoinRequest> pendingInvitations = joinRequestRepository.findByTripIdAndStatus(tripId, JoinRequestStatus.PENDING)
+                .stream()
+                .filter(jr -> jr.getUser().getId().equals(user.getId()))
+                .collect(Collectors.toList());
+
+        if (pendingInvitations.isEmpty()) {
+            throw new BadRequestException("No pending invitation found for this trip.");
+        }
+
+        // 2. Mark invitation as REJECTED
+        for (JoinRequest jr : pendingInvitations) {
+            jr.setStatus(JoinRequestStatus.REJECTED);
+            joinRequestRepository.save(jr);
+        }
+
+        // 3. Mark related invitation notifications as read
+        List<Notification> userNotifs = notificationRepository.findByUserIdOrderByIdDesc(user.getId());
+        for (Notification n : userNotifs) {
+            if ((n.getNotifType() == NotificationType.TRIP_INVITATION || n.getNotifType() == NotificationType.MEMBER_ADDED) &&
+                    (tripId.equals(n.getTripId()) || (n.getMessage() != null && n.getMessage().contains(trip.getTitle())))) {
+                n.setRead(true);
+                notificationRepository.save(n);
+            }
+        }
+
+        // 4. Notify trip owner
+        if (trip.getUser() != null && !trip.getUser().getId().equals(user.getId())) {
+            String inviterMessage = (user.getFullName() != null && !user.getFullName().isBlank() ? user.getFullName() : user.getEmail())
+                    + " rejected your invitation to join the trip: " + trip.getTitle();
+            notificationService.createNotification(
+                    trip.getUser(),
+                    NotificationType.INVITATION_REJECTED,
+                    inviterMessage,
+                    trip.getId(),
+                    true
+            );
+        }
     }
 
     private User getUser(String email) {

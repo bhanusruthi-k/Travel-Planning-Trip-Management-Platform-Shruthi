@@ -29,6 +29,9 @@ public class Notification {
     @Column(nullable = false, length = 1000)
     private String message;
 
+    @Column(name = "trip_id")
+    private Long tripId;
+
     @Column(name = "is_read", nullable = false)
     @Builder.Default
     private boolean isRead = false;

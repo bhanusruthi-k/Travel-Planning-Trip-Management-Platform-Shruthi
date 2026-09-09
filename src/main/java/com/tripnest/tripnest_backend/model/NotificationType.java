@@ -1,6 +1,9 @@
 package com.tripnest.tripnest_backend.model;
 
 public enum NotificationType {
+    TRIP_INVITATION,
+    INVITATION_ACCEPTED,
+    INVITATION_REJECTED,
     MEMBER_ADDED,
     JOIN_REQUEST_SUBMITTED,
     JOIN_REQUEST_APPROVED,

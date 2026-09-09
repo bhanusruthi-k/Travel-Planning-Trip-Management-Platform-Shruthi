@@ -5,14 +5,20 @@ import { ThemeProvider } from './context/ThemeContext';
 import { ToastProvider } from './context/ToastContext';
 import Navbar from './components/Navbar';
 import ProtectedRoute from './components/ProtectedRoute';
-import LoginPage from './pages/LoginPage';
-import RegisterPage from './pages/RegisterPage';
+import LoginTypePage from './pages/LoginTypePage';
+import UserLoginPage from './pages/UserLoginPage';
+import AdminLoginPage from './pages/AdminLoginPage';
+import RegisterTypePage from './pages/RegisterTypePage';
+import UserRegisterPage from './pages/UserRegisterPage';
+import AdminRegisterPage from './pages/AdminRegisterPage';
 import DestinationsPage from './pages/DestinationsPage';
 import DestinationDetailsPage from './pages/DestinationDetailsPage';
 import TripsPage from './pages/TripsPage';
 import TripDetailsPage from './pages/TripDetailsPage';
 import TravelerDashboardPage from './pages/TravelerDashboardPage';
 import AdminDashboardPage from './pages/AdminDashboardPage';
+import ProfilePage from './pages/ProfilePage';
+import NotificationsPage from './pages/NotificationsPage';
 import './App.css';
 
 function App() {
@@ -28,8 +34,16 @@ function App() {
                   <Route path="/" element={<Navigate to="/destinations" replace />} />
                   <Route path="/destinations" element={<DestinationsPage />} />
                   <Route path="/destinations/:id" element={<DestinationDetailsPage />} />
-                  <Route path="/login" element={<LoginPage />} />
-                  <Route path="/register" element={<RegisterPage />} />
+                  
+                  {/* Authentication Routes - Single Login & Single Public Register */}
+                  <Route path="/login" element={<UserLoginPage />} />
+                  <Route path="/login/user" element={<Navigate to="/login" replace />} />
+                  <Route path="/login/admin" element={<Navigate to="/login" replace />} />
+                  <Route path="/register" element={<UserRegisterPage />} />
+                  <Route path="/register/user" element={<Navigate to="/register" replace />} />
+                  <Route path="/register/admin" element={<Navigate to="/register" replace />} />
+
+                  {/* Protected Dashboards & Trip Management */}
                   <Route
                     path="/dashboard"
                     element={
@@ -41,7 +55,7 @@ function App() {
                   <Route
                     path="/admin/dashboard"
                     element={
-                      <ProtectedRoute>
+                      <ProtectedRoute roles={['ADMINISTRATOR']}>
                         <AdminDashboardPage />
                       </ProtectedRoute>
                     }
@@ -62,6 +76,22 @@ function App() {
                       </ProtectedRoute>
                     }
                   />
+                  <Route
+                    path="/profile"
+                    element={
+                      <ProtectedRoute>
+                        <ProfilePage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/notifications"
+                    element={
+                      <ProtectedRoute>
+                        <NotificationsPage />
+                      </ProtectedRoute>
+                    }
+                  />
                   <Route path="*" element={<Navigate to="/destinations" replace />} />
                 </Routes>
               </main>
@@ -72,5 +102,6 @@ function App() {
     </ThemeProvider>
   );
 }
+
 
 export default App;

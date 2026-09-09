@@ -34,6 +34,16 @@ public class TripController {
         return ResponseEntity.ok(trips);
     }
 
+    @GetMapping("/search")
+    public ResponseEntity<List<TripResponseDTO>> searchTrips(
+            @RequestParam(required = false) String name,
+            @RequestParam(required = false) String title,
+            @RequestParam(required = false) String query) {
+        String searchTerm = name != null ? name : (title != null ? title : query);
+        List<TripResponseDTO> trips = tripService.searchTrips(searchTerm);
+        return ResponseEntity.ok(trips);
+    }
+
     @GetMapping("/{id}")
     public ResponseEntity<TripResponseDTO> getTripById(@PathVariable Long id,
                                                        Authentication authentication) {

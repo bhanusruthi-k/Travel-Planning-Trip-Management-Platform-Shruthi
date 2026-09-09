@@ -18,4 +18,8 @@ public interface ItineraryDayRepository extends JpaRepository<ItineraryDay, Long
     List<ItineraryDay> findByTripIdWithActivitiesOrderByDayNumberAsc(@Param("tripId") Long tripId);
 
     Optional<ItineraryDay> findByIdAndTripId(Long id, Long tripId);
+
+    @org.springframework.data.jpa.repository.Modifying
+    @Query("DELETE FROM ItineraryDay d WHERE d.trip.id = :tripId")
+    void deleteByTripId(@Param("tripId") Long tripId);
 }

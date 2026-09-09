@@ -16,6 +16,14 @@ public class UserDTO {
     private Long id;
     private String email;
     private String fullName;
+    private String phoneNumber;
+    private String dateOfBirth;
+    private String gender;
+    private String country;
+    private String city;
+    private String bio;
+    private String profilePhoto;
     private Role role;
     private LocalDateTime createdAt;
 }
+

@@ -30,10 +30,17 @@ public class NotificationServiceImpl implements NotificationService {
     @Override
     @Transactional
     public NotificationResponseDTO createNotification(User user, NotificationType type, String message, boolean sendEmail) {
+        return createNotification(user, type, message, null, sendEmail);
+    }
+
+    @Override
+    @Transactional
+    public NotificationResponseDTO createNotification(User user, NotificationType type, String message, Long tripId, boolean sendEmail) {
         Notification notification = Notification.builder()
                 .user(user)
                 .notifType(type)
                 .message(message)
+                .tripId(tripId)
                 .isRead(false)
                 .build();
 
@@ -101,6 +108,7 @@ public class NotificationServiceImpl implements NotificationService {
                 .id(n.getId())
                 .type(n.getNotifType())
                 .message(n.getMessage())
+                .tripId(n.getTripId())
                 .isRead(n.isRead())
                 .createdAt(n.getCreatedAt())
                 .build();
@@ -108,6 +116,12 @@ public class NotificationServiceImpl implements NotificationService {
 
     private String getSubjectForType(NotificationType type) {
         switch (type) {
+            case TRIP_INVITATION:
+                return "TripNest — You have been invited to join a trip";
+            case INVITATION_ACCEPTED:
+                return "TripNest — Your trip invitation was accepted";
+            case INVITATION_REJECTED:
+                return "TripNest — Your trip invitation was rejected";
             case MEMBER_ADDED:
                 return "TripNest — You have been added to a trip";
             case JOIN_REQUEST_SUBMITTED:

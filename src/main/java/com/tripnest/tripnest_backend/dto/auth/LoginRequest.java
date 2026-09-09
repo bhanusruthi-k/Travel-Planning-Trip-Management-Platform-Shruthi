@@ -1,12 +1,15 @@
 package com.tripnest.tripnest_backend.dto.auth;
 
+import com.tripnest.tripnest_backend.model.Role;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import lombok.AllArgsConstructor;
+import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
 @Data
+@Builder
 @NoArgsConstructor
 @AllArgsConstructor
 public class LoginRequest {
@@ -17,4 +20,11 @@ public class LoginRequest {
 
     @NotBlank(message = "Password is required")
     private String password;
+
+    private Role expectedRole;
+
+    public LoginRequest(String email, String password) {
+        this.email = email;
+        this.password = password;
+    }
 }

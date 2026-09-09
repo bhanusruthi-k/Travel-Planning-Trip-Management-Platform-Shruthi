@@ -25,4 +25,9 @@ export const tripApi = {
     const response = await api.delete(`/api/trips/${id}`);
     return response.data;
   },
+
+  searchTrips: async (name) => {
+    const response = await api.get('/api/trips/search', { params: { name } });
+    return response.data;
+  },
 };

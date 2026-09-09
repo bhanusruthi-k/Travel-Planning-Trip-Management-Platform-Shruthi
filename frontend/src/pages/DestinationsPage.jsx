@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useEffect, useCallback } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { destinationApi } from '../api/destinationApi';
 import { useAuth } from '../context/AuthContext';
 import { getDestinationPhotos } from '../utils/destinationGalleries';
@@ -14,14 +14,36 @@ import {
   Plus,
   DollarSign,
   Images,
+  Sparkles,
 } from 'lucide-react';
 
+const CATEGORY_TABS = [
+  { id: 'ALL', label: 'All' },
+  { id: 'CITY', label: 'City' },
+  { id: 'BEACH', label: 'Beach' },
+  { id: 'NATURE', label: 'Nature' },
+  { id: 'ADVENTURE', label: 'Adventure' },
+  { id: 'CULTURE', label: 'Culture' },
+  { id: 'WILDLIFE', label: 'Wildlife' },
+  { id: 'ROMANTIC', label: 'Romantic' },
+  { id: 'FOOD', label: 'Food' },
+  { id: 'LUXURY', label: 'Luxury' },
+  { id: 'MOUNTAINS', label: 'Mountains' },
+  { id: 'ISLAND', label: 'Islands' },
+  { id: 'HERITAGE', label: 'Heritage' },
+  { id: 'WINTER', label: 'Winter' },
+  { id: 'SPIRITUAL', label: 'Spiritual' },
+];
+
 const DestinationsPage = () => {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [destinations, setDestinations] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [search, setSearch] = useState('');
-  const [selectedCategory, setSelectedCategory] = useState('ALL');
+  const [search, setSearch] = useState(() => searchParams.get('search') || '');
+  const [selectedCategory, setSelectedCategory] = useState(() => searchParams.get('category') || 'ALL');
+
+  const [connectingMsg, setConnectingMsg] = useState('');
 
   // Photo Gallery Lightbox state
   const [galleryModalState, setGalleryModalState] = useState({
@@ -34,43 +56,97 @@ const DestinationsPage = () => {
   const { isAuthenticated } = useAuth();
   const navigate = useNavigate();
 
+  // Sync state if URL searchParams change
   useEffect(() => {
-    const fetchData = async () => {
-      setLoading(true);
+    const urlCat = searchParams.get('category') || 'ALL';
+    const urlSearch = searchParams.get('search') || '';
+    setSelectedCategory(urlCat);
+    setSearch(urlSearch);
+  }, [searchParams]);
+
+  const updateUrlParams = (cat, query) => {
+    const newParams = {};
+    if (cat && cat !== 'ALL') {
+      newParams.category = cat;
+    }
+    if (query && query.trim()) {
+      newParams.search = query.trim();
+    }
+    setSearchParams(newParams, { replace: true });
+  };
+
+  const fetchDestinations = useCallback(async (cat, query, retryAttempt = 0) => {
+    const MAX_RETRIES = 3;
+    setLoading(true);
+    if (retryAttempt === 0) {
       setError('');
-      try {
-        const allDest = await destinationApi.getDestinations();
-        setDestinations(allDest || []);
-      } catch (err) {
-        console.error('Failed to load destinations:', err);
+      setConnectingMsg('');
+    }
+
+    try {
+      const params = {};
+      if (cat && cat !== 'ALL') {
+        params.category = cat;
+      }
+      if (query && query.trim()) {
+        params.search = query.trim();
+      }
+      const data = await destinationApi.getDestinations(params);
+      setDestinations(data || []);
+      setError('');
+      setConnectingMsg('');
+    } catch (err) {
+      console.error(`[DestinationsPage] Fetch attempt ${retryAttempt + 1} failed:`, err);
+      
+      const isNetworkOrStartupError = !err.response || err.code === 'ECONNABORTED' || err.code === 'ERR_NETWORK' || [502, 503, 504].includes(err.response?.status);
+
+      if (isNetworkOrStartupError && retryAttempt < MAX_RETRIES) {
+        setConnectingMsg(`Connecting to TripNest server... (attempt ${retryAttempt + 1} of ${MAX_RETRIES})`);
+        setTimeout(() => {
+          fetchDestinations(cat, query, retryAttempt + 1);
+        }, 2000);
+        return;
+      }
+
+      setConnectingMsg('');
+      if (isNetworkOrStartupError) {
+        setError('TripNest server is not running. Please start TripNest.');
+      } else if (err.response?.status === 404) {
+        setError('Destination service was not found.');
+      } else if (err.response?.status >= 500) {
+        setError("TripNest couldn't load destinations right now.");
+      } else {
         setError('Unable to load destinations. Please check backend connection.');
-      } finally {
+      }
+    } finally {
+      if (retryAttempt === 0 || retryAttempt >= MAX_RETRIES) {
         setLoading(false);
       }
-    };
-    fetchData();
+    }
   }, []);
 
-  const categories = useMemo(() => {
-    return ['ALL', ...new Set(destinations.map((d) => d.category).filter(Boolean))];
-  }, [destinations]);
+  // Fetch when category or search changes
+  useEffect(() => {
+    fetchDestinations(selectedCategory, search);
+  }, [selectedCategory, search, fetchDestinations]);
 
-  const filteredDestinations = useMemo(() => {
-    return destinations.filter((dest) => {
-      const q = search.trim().toLowerCase();
-      const matchesSearch =
-        !q ||
-        dest.name?.toLowerCase().includes(q) ||
-        dest.country?.toLowerCase().includes(q) ||
-        (dest.description && dest.description.toLowerCase().includes(q)) ||
-        (dest.category && dest.category.toLowerCase().includes(q));
+  // Handle search submission
+  const handleSearchSubmit = (e) => {
+    if (e) e.preventDefault();
+    updateUrlParams(selectedCategory, search);
+    fetchDestinations(selectedCategory, search);
+  };
 
-      const matchesCategory =
-        selectedCategory === 'ALL' || dest.category === selectedCategory;
+  const handleCategoryClick = (catId) => {
+    setSelectedCategory(catId);
+    updateUrlParams(catId, search);
+  };
 
-      return matchesSearch && matchesCategory;
-    });
-  }, [destinations, search, selectedCategory]);
+  const handleClearFilters = () => {
+    setSearch('');
+    setSelectedCategory('ALL');
+    setSearchParams({}, { replace: true });
+  };
 
   const handlePlanTrip = (e, destId) => {
     e.stopPropagation();
@@ -102,9 +178,9 @@ const DestinationsPage = () => {
       <section className="discovery-top-bar">
         <div className="discovery-header-row">
           <div className="discovery-title-area">
-            <h1 className="page-main-heading">EXPLORE DESTINATIONS</h1>
+            <h1 className="page-main-heading">Explore Destinations</h1>
             <p className="page-sub-heading">
-              Find a place for your next trip.
+              Discover breathtaking locations, iconic landmarks, and curated getaways worldwide.
             </p>
           </div>
 
@@ -116,17 +192,12 @@ const DestinationsPage = () => {
 
         {/* Integrated Search & Filter Controls */}
         <div className="search-filter-command-bar">
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-            }}
-            className="search-input-form"
-          >
+          <form onSubmit={handleSearchSubmit} className="search-input-form">
             <div className="search-input-wrapper">
               <Search className="search-icon-fixed" size={18} />
               <input
                 type="text"
-                placeholder="Search destinations (e.g. Paris, Tokyo, Bali, Beach)..."
+                placeholder="Search destinations by name, country, region, or keyword..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 className="search-field-input"
@@ -136,7 +207,10 @@ const DestinationsPage = () => {
                 <button
                   type="button"
                   className="search-clear-btn"
-                  onClick={() => setSearch('')}
+                  onClick={() => {
+                    setSearch('');
+                    fetchDestinations(selectedCategory, '');
+                  }}
                   aria-label="Clear search"
                 >
                   <X size={15} />
@@ -149,25 +223,32 @@ const DestinationsPage = () => {
             </button>
           </form>
 
+          {/* Category Filter Tabs */}
           <div className="category-pill-group" role="tablist" aria-label="Destination Categories">
-            {categories.map((cat) => (
+            {CATEGORY_TABS.map((cat) => (
               <button
-                key={cat}
+                key={cat.id}
                 type="button"
-                className={`category-filter-btn ${selectedCategory === cat ? 'active' : ''}`}
-                onClick={() => setSelectedCategory(cat)}
+                className={`category-filter-btn ${selectedCategory === cat.id ? 'active' : ''}`}
+                onClick={() => handleCategoryClick(cat.id)}
                 role="tab"
-                aria-selected={selectedCategory === cat}
+                aria-selected={selectedCategory === cat.id}
               >
-                {cat === 'ALL' ? 'All Places' : cat}
+                {cat.label}
               </button>
             ))}
           </div>
         </div>
       </section>
 
-      {/* 2. LOADING STATE */}
-      {loading ? (
+      {/* 2. LOADING & CONNECTING STATE */}
+      {connectingMsg ? (
+        <div className="empty-results-box" style={{ padding: '60px 20px', textAlign: 'center' }}>
+          <div style={{ margin: '0 auto 16px', width: '36px', height: '36px', border: '3px solid var(--border-color, #e2e8f0)', borderTopColor: 'var(--color-primary, #BD4444)', borderRadius: '50%', animation: 'spin 1s linear infinite' }}></div>
+          <h3 style={{ color: 'var(--text-primary)', fontSize: '1.25rem', marginBottom: '8px' }}>{connectingMsg}</h3>
+          <p style={{ color: 'var(--text-muted)' }}>Waiting for TripNest backend services to initialize...</p>
+        </div>
+      ) : loading ? (
         <div className="loading-grid-skeleton">
           <div className="destinations-uniform-grid">
             {Array.from({ length: 8 }).map((_, i) => (
@@ -179,33 +260,38 @@ const DestinationsPage = () => {
         <div className="empty-results-box">
           <Compass size={40} className="empty-icon" />
           <h3>{error}</h3>
-          <p>Please check your backend connection and try again.</p>
-        </div>
-      ) : filteredDestinations.length === 0 ? (
-        <div className="empty-results-box">
-          <Compass size={44} className="empty-icon" />
-          <h3>No destinations matched "{search}"</h3>
-          <p>Try searching for a different city, country, or selecting another category.</p>
+          <p>Please ensure the TripNest backend is running on port 8080.</p>
           <button
             type="button"
             className="btn-primary-compact"
-            onClick={() => {
-              setSearch('');
-              setSelectedCategory('ALL');
-            }}
+            style={{ marginTop: '16px' }}
+            onClick={() => fetchDestinations(selectedCategory, search, 0)}
+          >
+            Retry Connection
+          </button>
+        </div>
+      ) : destinations.length === 0 ? (
+        <div className="empty-results-box">
+          <Compass size={44} className="empty-icon" />
+          <h3>No destinations found for "{search || selectedCategory}"</h3>
+          <p>Try searching for a different city, country, or selecting another travel category.</p>
+          <button
+            type="button"
+            className="btn-primary-compact"
+            onClick={handleClearFilters}
           >
             View All Destinations
           </button>
         </div>
       ) : (
-        /* 3. SINGLE CONTINUOUS UNIFORM DESTINATIONS GRID */
+        /* 3. CONTINUOUS UNIFORM DESTINATIONS GRID */
         <section className="all-destinations-uniform-section">
           <div className="section-title-strip">
             <div>
               <h2 className="section-title">
                 {search || selectedCategory !== 'ALL'
-                  ? `Destinations (${filteredDestinations.length})`
-                  : `All Destinations (${filteredDestinations.length})`}
+                  ? `Destinations (${destinations.length})`
+                  : `All Destinations (${destinations.length})`}
               </h2>
               <p className="section-subtitle">
                 Explore worldwide destinations. Click any card for details or photo icon to view gallery.
@@ -215,10 +301,7 @@ const DestinationsPage = () => {
               <button
                 type="button"
                 className="btn-reset-filters"
-                onClick={() => {
-                  setSearch('');
-                  setSelectedCategory('ALL');
-                }}
+                onClick={handleClearFilters}
               >
                 Reset Filters
               </button>
@@ -226,8 +309,12 @@ const DestinationsPage = () => {
           </div>
 
           <div className="destinations-uniform-grid">
-            {filteredDestinations.map((dest) => {
+            {destinations.map((dest) => {
               const photos = getDestinationPhotos(dest);
+              const mainImg = dest.imageUrl || photos[0]?.url || 'https://images.unsplash.com/photo-1502602898657-3e91760cbb34?auto=format&fit=crop&w=800&q=80';
+              const photoCount = photos.length || 1;
+              const photoBadgeText = photoCount === 1 ? '1 Photo' : `${photoCount} Photos`;
+
               return (
                 <div
                   key={dest.id}
@@ -237,27 +324,29 @@ const DestinationsPage = () => {
                   <div
                     className="dest-card-image-wrap"
                     onClick={(e) => handleOpenGallery(e, dest, 0)}
-                    title="Click to view full-screen photo gallery"
+                    title={`Click to view ${dest.name} photo gallery`}
                   >
                     <img
-                      src={photos[0]?.url || dest.imageUrl || 'https://images.unsplash.com/photo-1488646953014-85cb44e25828?auto=format&fit=crop&w=800&q=80'}
-                      alt={dest.name}
+                      src={mainImg}
+                      alt={`${dest.name}, ${dest.country} travel destination`}
                       className="dest-card-img"
                       loading="lazy"
-                      onError={(e) => {
-                        e.target.onerror = null;
-                        e.target.src = 'https://images.unsplash.com/photo-1488646953014-85cb44e25828?auto=format&fit=crop&w=800&q=80';
-                      }}
                     />
                     <button
                       type="button"
                       className="dest-gallery-trigger-badge"
                       onClick={(e) => handleOpenGallery(e, dest, 0)}
-                      title="Open photo gallery"
+                      title={`Open photo gallery for ${dest.name}`}
                       aria-label={`Open photo gallery for ${dest.name}`}
                     >
-                      <Images size={13} /> {photos.length} Photos
+                      <Images size={13} /> {photoBadgeText}
                     </button>
+
+                    {dest.isPopular && (
+                      <span className="dest-badge-popular">
+                        <Sparkles size={11} /> Popular
+                      </span>
+                    )}
 
                     {dest.category && (
                       <span className="dest-badge-category">{dest.category}</span>
@@ -268,7 +357,7 @@ const DestinationsPage = () => {
                     <div className="dest-card-header">
                       <h3 className="dest-card-title">{dest.name}</h3>
                       <span className="dest-card-country">
-                        <MapPin size={13} /> {dest.country}
+                        <MapPin size={13} /> {dest.country} {dest.region ? `• ${dest.region}` : ''}
                       </span>
                     </div>
 

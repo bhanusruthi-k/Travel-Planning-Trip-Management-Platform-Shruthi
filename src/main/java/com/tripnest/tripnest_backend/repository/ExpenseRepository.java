@@ -54,4 +54,8 @@ public interface ExpenseRepository extends JpaRepository<Expense, Long> {
 
     @Query("SELECT COALESCE(SUM(e.amount), 0) FROM Expense e")
     BigDecimal getTotalPlatformExpenses();
+
+    @org.springframework.data.jpa.repository.Modifying
+    @Query("DELETE FROM Expense e WHERE e.trip.id = :tripId")
+    void deleteByTripId(@Param("tripId") Long tripId);
 }

@@ -61,4 +61,10 @@ public interface TripRepository extends JpaRepository<Trip, Long> {
     @Query("SELECT t FROM Trip t LEFT JOIN FETCH t.destination LEFT JOIN FETCH t.user " +
            "WHERE t.startDate = :targetDate AND t.status != com.tripnest.tripnest_backend.model.TripStatus.CANCELLED")
     List<Trip> findTripsStartingOnDate(@Param("targetDate") LocalDate targetDate);
+
+    @Query("SELECT DISTINCT t FROM Trip t LEFT JOIN FETCH t.destination LEFT JOIN FETCH t.user " +
+           "WHERE LOWER(t.title) LIKE LOWER(CONCAT('%', :query, '%')) " +
+           "OR (t.destination IS NOT NULL AND (LOWER(t.destination.name) LIKE LOWER(CONCAT('%', :query, '%')) OR LOWER(t.destination.country) LIKE LOWER(CONCAT('%', :query, '%')))) " +
+           "ORDER BY t.startDate DESC")
+    List<Trip> searchTrips(@Param("query") String query);
 }

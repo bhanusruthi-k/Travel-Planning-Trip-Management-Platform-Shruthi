@@ -32,8 +32,18 @@ public class Destination {
 
     private String category;
 
+    private String region;
+
     @Column(name = "average_cost")
     private Double averageCost;
+
+    @Column(name = "is_popular")
+    @Builder.Default
+    private Boolean isPopular = false;
+
+    @Column(name = "is_active")
+    @Builder.Default
+    private Boolean isActive = true;
 
     @Column(name = "created_at", updatable = false)
     private LocalDateTime createdAt;
@@ -45,7 +55,14 @@ public class Destination {
     protected void onCreate() {
         this.createdAt = LocalDateTime.now();
         this.updatedAt = LocalDateTime.now();
+        if (this.isPopular == null) {
+            this.isPopular = false;
+        }
+        if (this.isActive == null) {
+            this.isActive = true;
+        }
     }
+
 
     @PreUpdate
     protected void onUpdate() {

@@ -30,8 +30,8 @@ export const AuthProvider = ({ children }) => {
     checkAuth();
   }, []);
 
-  const login = async (email, password) => {
-    const data = await authApi.login(email, password);
+  const login = async (email, password, expectedRole = null) => {
+    const data = await authApi.login(email, password, expectedRole);
     setToken(data.token);
     setUser(data.user);
     localStorage.setItem('tripnest_token', data.token);
@@ -41,11 +41,17 @@ export const AuthProvider = ({ children }) => {
 
   const register = async (userData) => {
     const data = await authApi.register(userData);
-    setToken(data.token);
-    setUser(data.user);
-    localStorage.setItem('tripnest_token', data.token);
-    localStorage.setItem('tripnest_user', JSON.stringify(data.user));
-    return data.user;
+    return data;
+  };
+
+  const registerAdmin = async (userData) => {
+    const data = await authApi.registerAdmin(userData);
+    return data;
+  };
+
+  const updateUser = (updatedUser) => {
+    setUser(updatedUser);
+    localStorage.setItem('tripnest_user', JSON.stringify(updatedUser));
   };
 
   const logout = () => {
@@ -65,6 +71,8 @@ export const AuthProvider = ({ children }) => {
         loading,
         login,
         register,
+        registerAdmin,
+        updateUser,
         logout,
       }}
     >
@@ -72,6 +80,7 @@ export const AuthProvider = ({ children }) => {
     </AuthContext.Provider>
   );
 };
+
 
 export const useAuth = () => {
   const context = useContext(AuthContext);

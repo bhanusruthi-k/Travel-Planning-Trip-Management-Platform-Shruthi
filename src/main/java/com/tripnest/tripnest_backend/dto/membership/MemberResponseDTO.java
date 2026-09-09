@@ -17,4 +17,5 @@ public class MemberResponseDTO {
     private String email;
     private String role; // OWNER, GROUP_ADMIN, MEMBER
     private LocalDateTime joinedAt;
+    private Boolean emailDelivered;
 }

@@ -17,6 +17,8 @@ public class NotificationResponseDTO {
     private Long id;
     private NotificationType type;
     private String message;
+    private Long tripId;
+    private String tripTitle;
 
     @JsonProperty("isRead")
     private boolean isRead;

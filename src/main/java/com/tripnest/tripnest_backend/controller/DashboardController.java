@@ -19,6 +19,12 @@ public class DashboardController {
 
     private final DashboardService dashboardService;
 
+    @GetMapping
+    public ResponseEntity<TravelerDashboardResponseDTO> getDashboard(
+            @AuthenticationPrincipal UserDetails userDetails) {
+        return ResponseEntity.ok(dashboardService.getTravelerDashboard(userDetails.getUsername()));
+    }
+
     @GetMapping("/traveler")
     public ResponseEntity<TravelerDashboardResponseDTO> getTravelerDashboard(
             @AuthenticationPrincipal UserDetails userDetails) {
@@ -31,3 +37,4 @@ public class DashboardController {
         return ResponseEntity.ok(dashboardService.getAdminDashboard());
     }
 }
+

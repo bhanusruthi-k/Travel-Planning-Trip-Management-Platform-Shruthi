@@ -24,4 +24,8 @@ public interface MembershipService {
     JoinRequestResponseDTO approveJoinRequest(Long tripId, Long requestId, String requesterEmail);
 
     JoinRequestResponseDTO rejectJoinRequest(Long tripId, Long requestId, String requesterEmail);
+
+    MemberResponseDTO acceptInvitation(Long tripId, String userEmail);
+
+    void rejectInvitation(Long tripId, String userEmail);
 }

@@ -1,9 +1,11 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { tripApi } from '../api/tripApi';
 import { itineraryApi } from '../api/itineraryApi';
 import { budgetApi } from '../api/budgetApi';
 import { expenseApi } from '../api/expenseApi';
+import { memberApi } from '../api/memberApi';
+import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import {
   Calendar,
@@ -34,7 +36,19 @@ import {
   CheckCircle2,
   AlertTriangle,
   ArrowUpRight,
+  Users,
+  UserPlus,
+  UserMinus,
+  ShieldCheck,
+  MoreVertical,
+  Mail,
+  User as UserIcon,
+  TrendingDown,
+  XCircle,
+  Ban,
 } from 'lucide-react';
+import DatePicker from '../components/DatePicker';
+import ConfirmModal from '../components/ConfirmModal';
 import {
   Chart as ChartJS,
   ArcElement,
@@ -67,25 +81,33 @@ const FIXED_EXPENSE_CATEGORIES = [
   { id: 'Food', label: 'Food', icon: Utensils, color: '#f59e0b', emoji: '🍜' },
   { id: 'Shopping', label: 'Shopping', icon: ShoppingBag, color: '#ec4899', emoji: '🛍️' },
   { id: 'Entertainment', label: 'Entertainment', icon: Ticket, color: '#8b5cf6', emoji: '🎟️' },
-  { id: 'Miscellaneous', label: 'Miscellaneous', icon: Receipt, color: '#10b981', emoji: '🏷️' },
 ];
 
 const BUDGET_TIERS = ['Backpacker / Budget', 'Smart Mid-Range', 'Comfort & Boutique', 'Luxury Escape', 'Business / Work'];
 
 const TripDetailsPage = () => {
   const { id } = useParams();
+  const { user: currentUser } = useAuth();
   const [trip, setTrip] = useState(null);
   const [days, setDays] = useState([]);
   const [budget, setBudget] = useState(null);
   const [expenses, setExpenses] = useState([]);
   const [categorySummaries, setCategorySummaries] = useState([]);
   const [budgetExpenseSummary, setBudgetExpenseSummary] = useState(null);
+  const [members, setMembers] = useState([]);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
   // Active view section
-  const [activeSection, setActiveSection] = useState('all'); // 'all', 'budget_expenses', 'itinerary'
+  const [activeSection, setActiveSection] = useState('all'); // 'all', 'members', 'itinerary', 'budget_expenses'
+
+  // Member Management State
+  const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
+  const [inviteEmail, setInviteEmail] = useState('');
+  const [inviteLoading, setInviteLoading] = useState(false);
+  const [inviteError, setInviteError] = useState('');
+  const [openMemberMenuId, setOpenMemberMenuId] = useState(null);
 
   // Expense Filter & Search
   const [expenseFilterCategory, setExpenseFilterCategory] = useState('ALL');
@@ -135,27 +157,38 @@ const TripDetailsPage = () => {
     expenseDate: new Date().toISOString().split('T')[0],
     receiptUrl: '',
     description: '',
+    paidBy: '',
   });
   const [expenseModalLoading, setExpenseModalLoading] = useState(false);
 
   const [modalError, setModalError] = useState('');
+  const [confirmDialog, setConfirmDialog] = useState({
+    isOpen: false,
+    title: '',
+    message: '',
+    confirmText: 'Delete',
+    danger: true,
+    onConfirm: () => {},
+  });
   const { showToast } = useToast();
+  const hasShownOpenToast = useRef(false);
 
   // Chart ref
   const chartCanvasRef = useRef(null);
   const chartInstanceRef = useRef(null);
 
-  const loadTripData = useCallback(async () => {
-    setLoading(true);
+  const loadTripData = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     setError('');
     try {
-      const [tripData, daysData, budgetData, expensesData, catSummaryData, bSummaryData] = await Promise.all([
+      const [tripData, daysData, budgetData, expensesData, catSummaryData, bSummaryData, membersData] = await Promise.all([
         tripApi.getTripById(id),
         itineraryApi.getItineraryForTrip(id),
         budgetApi.getBudget(id).catch(() => null),
         expenseApi.getExpenses(id).catch(() => []),
         expenseApi.getCategorySummary(id).catch(() => []),
         expenseApi.getRemainingBudget(id).catch(() => null),
+        memberApi.getMembers(id).catch(() => []),
       ]);
       setTrip(tripData);
       setDays(daysData || []);
@@ -163,17 +196,25 @@ const TripDetailsPage = () => {
       setExpenses(expensesData || []);
       setCategorySummaries(catSummaryData || []);
       setBudgetExpenseSummary(bSummaryData);
+      setMembers(membersData || []);
     } catch (err) {
       console.error('Failed to load trip details:', err);
       setError(err.response?.data?.message || 'Trip not found or access denied.');
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [id]);
 
   useEffect(() => {
     loadTripData();
   }, [loadTripData]);
+
+  // Click outside to close member menus
+  useEffect(() => {
+    const handleClickOutside = () => setOpenMemberMenuId(null);
+    window.addEventListener('click', handleClickOutside);
+    return () => window.removeEventListener('click', handleClickOutside);
+  }, []);
 
   // Currency Formatter Helper
   const activeCurrencyCode = budget?.currency || budgetExpenseSummary?.currency || 'USD';
@@ -190,6 +231,40 @@ const TripDetailsPage = () => {
     return `${sym}${Math.round(num).toLocaleString()}`;
   };
 
+  // Authoritative, real-time category summaries derived from loaded expenses
+  const computedCategorySummaries = useMemo(() => {
+    const catMap = new Map();
+    FIXED_EXPENSE_CATEGORIES.forEach((fc) => {
+      catMap.set(fc.id.toLowerCase(), { category: fc.id, totalAmount: 0, percentage: 0 });
+    });
+
+    let totalExpSum = 0;
+    expenses.forEach((e) => {
+      const amt = e.amount != null ? parseFloat(e.amount) : 0;
+      if (!isNaN(amt) && amt > 0) {
+        totalExpSum += amt;
+        const catKey = (e.category || 'Food').toLowerCase();
+        if (catMap.has(catKey)) {
+          const item = catMap.get(catKey);
+          item.totalAmount += amt;
+        } else {
+          catMap.set(catKey, { category: e.category || 'Other', totalAmount: amt, percentage: 0 });
+        }
+      }
+    });
+
+    const result = [];
+    catMap.forEach((val) => {
+      if (val.totalAmount > 0) {
+        val.percentage = totalExpSum > 0 ? Math.round((val.totalAmount / totalExpSum) * 1000) / 10 : 0;
+        result.push(val);
+      }
+    });
+
+    if (result.length > 0) return result;
+    return categorySummaries || [];
+  }, [expenses, categorySummaries]);
+
   // Render & Update Chart.js Instance
   useEffect(() => {
     if (!chartCanvasRef.current) return;
@@ -200,16 +275,18 @@ const TripDetailsPage = () => {
       chartInstanceRef.current = null;
     }
 
-    if (!categorySummaries || categorySummaries.length === 0) return;
+    if (!computedCategorySummaries || computedCategorySummaries.length === 0) return;
 
     const ctx = chartCanvasRef.current.getContext('2d');
     if (!ctx) return;
 
-    const labels = categorySummaries.map((c) => c.category);
-    const dataValues = categorySummaries.map((c) => (c.totalAmount ? parseFloat(c.totalAmount) : 0));
+    const labels = computedCategorySummaries.map((c) => c.category);
+    const dataValues = computedCategorySummaries.map((c) =>
+      typeof c.totalAmount === 'number' ? c.totalAmount : parseFloat(c.totalAmount) || 0
+    );
 
     // Map category colors
-    const colors = categorySummaries.map((c) => {
+    const colors = computedCategorySummaries.map((c) => {
       const match = FIXED_EXPENSE_CATEGORIES.find(
         (cat) => cat.id.toLowerCase() === c.category.toLowerCase()
       );
@@ -245,7 +322,7 @@ const TripDetailsPage = () => {
               display: false,
             },
             tooltip: {
-              backgroundColor: isDark ? 'rgba(17, 24, 39, 0.95)' : 'rgba(15, 23, 42, 0.9)',
+              backgroundColor: isDark ? 'rgba(17, 24, 39, 0.95)' : 'rgba(15, 23, 42, 0.95)',
               titleColor: '#ffffff',
               bodyColor: '#f1f5f9',
               padding: 12,
@@ -256,8 +333,8 @@ const TripDetailsPage = () => {
                   const val = item.raw || 0;
                   const sym = getCurrencySymbol(activeCurrencyCode);
                   const total = dataValues.reduce((a, b) => a + b, 0);
-                  const pct = total > 0 ? Math.round((val / total) * 100) : 0;
-                  return ` ${item.label}: ${sym}${val.toLocaleString()} (${pct}%)`;
+                  const pct = total > 0 ? ((val / total) * 100).toFixed(1) : '0.0';
+                  return ` ${item.label}: ${sym}${Number(val).toLocaleString()} (${pct}%)`;
                 },
               },
             },
@@ -287,7 +364,7 @@ const TripDetailsPage = () => {
               display: false,
             },
             tooltip: {
-              backgroundColor: isDark ? 'rgba(17, 24, 39, 0.95)' : 'rgba(15, 23, 42, 0.9)',
+              backgroundColor: isDark ? 'rgba(17, 24, 39, 0.95)' : 'rgba(15, 23, 42, 0.95)',
               titleColor: '#ffffff',
               bodyColor: '#f1f5f9',
               padding: 12,
@@ -296,7 +373,9 @@ const TripDetailsPage = () => {
                 label: (item) => {
                   const val = item.raw || 0;
                   const sym = getCurrencySymbol(activeCurrencyCode);
-                  return ` ${item.label}: ${sym}${val.toLocaleString()}`;
+                  const total = dataValues.reduce((a, b) => a + b, 0);
+                  const pct = total > 0 ? ((val / total) * 100).toFixed(1) : '0.0';
+                  return ` ${item.label}: ${sym}${Number(val).toLocaleString()} (${pct}%)`;
                 },
               },
             },
@@ -325,7 +404,7 @@ const TripDetailsPage = () => {
         chartInstanceRef.current = null;
       }
     };
-  }, [categorySummaries, chartType, activeCurrencyCode]);
+  }, [computedCategorySummaries, chartType, activeCurrencyCode]);
 
   // Day handlers
   const openAddDayModal = () => {
@@ -368,17 +447,26 @@ const TripDetailsPage = () => {
     }
   };
 
-  const handleDeleteDay = async (dayId, dayTitle) => {
-    if (window.confirm(`Delete "${dayTitle}" and all its activities?`)) {
-      try {
-        await itineraryApi.deleteDay(id, dayId);
-        setDays(days.filter((d) => d.id !== dayId));
-        showToast(`Itinerary day deleted`, 'info');
-      } catch (err) {
-        console.error('Failed to delete day:', err);
-        showToast(err.response?.data?.message || 'Failed to delete day.', 'error');
-      }
-    }
+  const handleDeleteDay = (dayId, dayTitle) => {
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Delete Itinerary Day?',
+      message: `Are you sure you want to delete "${dayTitle}" and all its activities?`,
+      confirmText: 'Delete Day',
+      danger: true,
+      onConfirm: async () => {
+        try {
+          await itineraryApi.deleteDay(id, dayId);
+          setDays((prev) => prev.filter((d) => d.id !== dayId));
+          showToast(`Itinerary day deleted successfully`, 'info');
+        } catch (err) {
+          console.error('Failed to delete day:', err);
+          showToast(err.response?.data?.message || 'Failed to delete day.', 'error');
+        } finally {
+          setConfirmDialog((prev) => ({ ...prev, isOpen: false }));
+        }
+      },
+    });
   };
 
   // Activity handlers
@@ -449,17 +537,26 @@ const TripDetailsPage = () => {
     }
   };
 
-  const handleDeleteActivity = async (activityId, activityTitle) => {
-    if (window.confirm(`Delete activity "${activityTitle}"?`)) {
-      try {
-        await itineraryApi.deleteActivity(activityId);
-        showToast(`Activity "${activityTitle}" removed`, 'info');
-        await loadTripData();
-      } catch (err) {
-        console.error('Failed to delete activity:', err);
-        showToast(err.response?.data?.message || 'Failed to delete activity.', 'error');
-      }
-    }
+  const handleDeleteActivity = (activityId, activityTitle) => {
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Delete Activity?',
+      message: `Are you sure you want to delete activity "${activityTitle}"?`,
+      confirmText: 'Delete Activity',
+      danger: true,
+      onConfirm: async () => {
+        try {
+          await itineraryApi.deleteActivity(activityId);
+          showToast(`Activity "${activityTitle}" deleted successfully`, 'success');
+          await loadTripData();
+        } catch (err) {
+          console.error('Failed to delete activity:', err);
+          showToast(err.response?.data?.message || 'Failed to delete activity.', 'error');
+        } finally {
+          setConfirmDialog((prev) => ({ ...prev, isOpen: false }));
+        }
+      },
+    });
   };
 
   // Budget Handlers
@@ -558,7 +655,7 @@ const TripDetailsPage = () => {
       }
 
       setIsBudgetModalOpen(false);
-      await loadTripData();
+      await loadTripData(true);
     } catch (err) {
       console.error('Failed to save budget:', err);
       const msg = err.response?.data?.message || 'Failed to save budget plan.';
@@ -569,17 +666,26 @@ const TripDetailsPage = () => {
     }
   };
 
-  const handleDeleteBudget = async () => {
-    if (window.confirm('Are you sure you want to remove the custom budget plan for this trip?')) {
-      try {
-        await budgetApi.deleteBudget(id);
-        showToast('Budget plan removed', 'info');
-        await loadTripData();
-      } catch (err) {
-        console.error('Failed to delete budget:', err);
-        showToast(err.response?.data?.message || 'Failed to remove budget', 'error');
-      }
-    }
+  const handleDeleteBudget = () => {
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Remove Budget Plan?',
+      message: 'Are you sure you want to remove the custom budget plan for this trip?',
+      confirmText: 'Remove Budget',
+      danger: true,
+      onConfirm: async () => {
+        try {
+          await budgetApi.deleteBudget(id);
+          showToast('Budget plan removed successfully', 'info');
+          await loadTripData(true);
+        } catch (err) {
+          console.error('Failed to delete budget:', err);
+          showToast(err.response?.data?.message || 'Failed to remove budget', 'error');
+        } finally {
+          setConfirmDialog((prev) => ({ ...prev, isOpen: false }));
+        }
+      },
+    });
   };
 
   // ==========================================
@@ -587,6 +693,10 @@ const TripDetailsPage = () => {
   // ==========================================
   const openAddExpenseModal = () => {
     setEditingExpenseId(null);
+    const defaultPayerId =
+      members.find((m) => m.email?.toLowerCase() === currentUser?.email?.toLowerCase())?.userId ||
+      members[0]?.userId ||
+      '';
     setExpenseFormData({
       title: '',
       category: 'Food',
@@ -594,6 +704,7 @@ const TripDetailsPage = () => {
       expenseDate: new Date().toISOString().split('T')[0],
       receiptUrl: '',
       description: '',
+      payerId: defaultPayerId,
     });
     setModalError('');
     setIsExpenseModalOpen(true);
@@ -608,6 +719,7 @@ const TripDetailsPage = () => {
       expenseDate: exp.expenseDate || new Date().toISOString().split('T')[0],
       receiptUrl: exp.receiptUrl || '',
       description: exp.description || '',
+      payerId: exp.payerId || '',
     });
     setModalError('');
     setIsExpenseModalOpen(true);
@@ -643,6 +755,7 @@ const TripDetailsPage = () => {
         expenseDate: expenseFormData.expenseDate,
         receiptUrl: expenseFormData.receiptUrl.trim() || null,
         description: expenseFormData.description.trim() || null,
+        payerId: expenseFormData.payerId ? Number(expenseFormData.payerId) : undefined,
       };
 
       if (editingExpenseId) {
@@ -654,7 +767,7 @@ const TripDetailsPage = () => {
       }
 
       setIsExpenseModalOpen(false);
-      await loadTripData();
+      await loadTripData(true);
     } catch (err) {
       console.error('Failed to save expense:', err);
       const msg = err.response?.data?.message || 'Failed to save expense.';
@@ -665,16 +778,142 @@ const TripDetailsPage = () => {
     }
   };
 
-  const handleDeleteExpense = async (expenseId, expenseTitle) => {
-    if (window.confirm(`Delete expense "${expenseTitle}"?`)) {
-      try {
-        await expenseApi.deleteExpense(id, expenseId);
-        showToast(`Expense "${expenseTitle}" removed`, 'info');
-        await loadTripData();
-      } catch (err) {
-        console.error('Failed to delete expense:', err);
-        showToast(err.response?.data?.message || 'Failed to delete expense.', 'error');
+  const handleDeleteExpense = (expenseId, expenseTitle) => {
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Delete Expense?',
+      message: `Are you sure you want to delete expense "${expenseTitle}"?`,
+      confirmText: 'Delete Expense',
+      danger: true,
+      onConfirm: async () => {
+        try {
+          await expenseApi.deleteExpense(id, expenseId);
+          showToast(`Expense "${expenseTitle}" deleted successfully`, 'success');
+          await loadTripData(true);
+        } catch (err) {
+          console.error('Failed to delete expense:', err);
+          showToast(err.response?.data?.message || 'Failed to delete expense.', 'error');
+        } finally {
+          setConfirmDialog((prev) => ({ ...prev, isOpen: false }));
+        }
+      },
+    });
+  };
+
+  // Member Management Helpers & Handlers
+  const isTripOwner =
+    trip?.user?.id === currentUser?.id ||
+    members.some((m) => m.userId === currentUser?.id && m.role === 'OWNER');
+  const isGroupAdmin = members.some(
+    (m) => m.userId === currentUser?.id && m.role === 'GROUP_ADMIN'
+  );
+  const canManageMembers = isTripOwner || isGroupAdmin;
+
+  const getInitials = (name) => {
+    if (!name) return 'TR';
+    const parts = name.trim().split(/\s+/);
+    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  };
+
+  const handleOpenInviteModal = () => {
+    setInviteEmail('');
+    setInviteError('');
+    setIsInviteModalOpen(true);
+  };
+
+  const handleCloseInviteModal = () => {
+    setIsInviteModalOpen(false);
+    setInviteEmail('');
+    setInviteError('');
+  };
+
+  const handleInviteSubmit = async (e) => {
+    e.preventDefault();
+    setInviteError('');
+    const email = inviteEmail.trim().toLowerCase();
+    if (!email) {
+      setInviteError('Please enter an email address.');
+      return;
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      setInviteError('Please enter a valid email address.');
+      return;
+    }
+
+    if (members.some((m) => m.email?.toLowerCase() === email)) {
+      setInviteError('This user is already a member of this trip.');
+      return;
+    }
+
+    setInviteLoading(true);
+    try {
+      const res = await memberApi.addMember(id, { email, role: 'MEMBER' });
+      if (res && res.emailDelivered === false) {
+        showToast(`Member added, but invitation email could not be delivered (check SMTP settings).`, 'warning');
+      } else {
+        showToast(`Invitation sent successfully to ${email}.`, 'success');
       }
+      handleCloseInviteModal();
+      await loadTripData();
+    } catch (err) {
+      console.error('Failed to invite member:', err);
+      const msg =
+        err.response?.data?.message ||
+        'Failed to send invitation. Please verify the email address exists in TripNest.';
+      setInviteError(msg);
+    } finally {
+      setInviteLoading(false);
+    }
+  };
+
+  const handleRemoveMember = (member) => {
+    setOpenMemberMenuId(null);
+    if (member.role === 'OWNER') {
+      showToast('Trip owner cannot be removed.', 'error');
+      return;
+    }
+
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Remove Member?',
+      message: `Are you sure you want to remove "${member.fullName}" from this trip?`,
+      confirmText: 'Remove Member',
+      danger: true,
+      onConfirm: async () => {
+        try {
+          await memberApi.removeMember(id, member.userId);
+          showToast(`${member.fullName} has been removed from the trip`, 'success');
+          await loadTripData();
+        } catch (err) {
+          console.error('Failed to remove member:', err);
+          showToast(err.response?.data?.message || 'Failed to remove member.', 'error');
+        } finally {
+          setConfirmDialog((prev) => ({ ...prev, isOpen: false }));
+        }
+      },
+    });
+  };
+
+  const handleToggleRole = async (member) => {
+    setOpenMemberMenuId(null);
+    if (member.role === 'OWNER') {
+      showToast('Trip owner role cannot be changed.', 'error');
+      return;
+    }
+
+    const newRole = member.role === 'GROUP_ADMIN' ? 'MEMBER' : 'GROUP_ADMIN';
+    const roleLabel = newRole === 'GROUP_ADMIN' ? 'Group Admin' : 'Member';
+
+    try {
+      await memberApi.updateMemberRole(id, member.userId, { role: newRole });
+      showToast(`Updated ${member.fullName}'s role to ${roleLabel}`, 'success');
+      await loadTripData();
+    } catch (err) {
+      console.error('Failed to update member role:', err);
+      showToast(err.response?.data?.message || 'Failed to update member role.', 'error');
     }
   };
 
@@ -697,25 +936,60 @@ const TripDetailsPage = () => {
     0
   );
 
-  const activeBudgetAmount = budgetExpenseSummary?.totalBudget
-    ? parseFloat(budgetExpenseSummary.totalBudget)
-    : budget?.totalBudget
+  const activeBudgetAmount = budget?.totalBudget != null
     ? parseFloat(budget.totalBudget)
-    : trip?.budget || 0;
+    : trip?.budget?.totalAmount != null
+    ? parseFloat(trip.budget.totalAmount)
+    : trip?.budget != null && trip.budget !== ''
+    ? parseFloat(trip.budget)
+    : budgetExpenseSummary?.totalBudget != null
+    ? parseFloat(budgetExpenseSummary.totalBudget)
+    : 0;
 
-  const totalSpentExpenses = budgetExpenseSummary?.totalExpenses
-    ? parseFloat(budgetExpenseSummary.totalExpenses)
-    : expenses.reduce((sum, e) => sum + (e.amount ? parseFloat(e.amount) : 0), 0);
+  const totalSpentExpenses = expenses.reduce(
+    (sum, e) => sum + (e.amount != null ? parseFloat(e.amount) : 0),
+    0
+  );
 
-  const remainingBudgetAmount = budgetExpenseSummary?.remainingBudget !== undefined
-    ? parseFloat(budgetExpenseSummary.remainingBudget)
-    : activeBudgetAmount - totalSpentExpenses;
+  const remainingBudgetAmount = activeBudgetAmount - totalSpentExpenses;
 
   const isOverBudget = remainingBudgetAmount < 0;
   const budgetSpentPct =
     activeBudgetAmount > 0
-      ? Math.min(Math.round((totalSpentExpenses / activeBudgetAmount) * 100), 100)
+      ? Math.round((totalSpentExpenses / activeBudgetAmount) * 100)
       : 0;
+  const progressBarWidth = Math.min(Math.max(budgetSpentPct, 0), 100);
+
+  const handleCancelTripClick = () => {
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Cancel Trip?',
+      message: `Are you sure you want to cancel the trip "${trip?.title}"? The trip status will be marked as CANCELLED and will remain visible under your Cancelled trips filter.`,
+      confirmText: 'Yes, Cancel Trip',
+      danger: true,
+      onConfirm: async () => {
+        try {
+          const payload = {
+            title: trip.title,
+            description: trip.description,
+            destinationId: trip.destination?.id || trip.destinationId,
+            startDate: trip.startDate,
+            endDate: trip.endDate,
+            budget: trip.budget?.totalAmount || trip.budget,
+            status: 'CANCELLED',
+          };
+          await tripApi.updateTrip(id, payload);
+          showToast('Trip cancelled successfully', 'success');
+          await loadTripData();
+        } catch (err) {
+          console.error('Failed to cancel trip:', err);
+          showToast(err.response?.data?.message || 'Failed to cancel trip.', 'error');
+        } finally {
+          setConfirmDialog((prev) => ({ ...prev, isOpen: false }));
+        }
+      },
+    });
+  };
 
   // Filtered expenses list
   const filteredExpenses = expenses.filter((e) => {
@@ -758,7 +1032,7 @@ const TripDetailsPage = () => {
       <div className="trip-nav-bar">
         <Link to="/trips" className="btn-back-link">
           <ArrowLeft size={16} />
-          <span>Back to All Trips</span>
+          <span>Back to My Trips</span>
         </Link>
         {trip.destination && (
           <Link
@@ -817,6 +1091,21 @@ const TripDetailsPage = () => {
                 <Wallet size={15} />
                 <span>{budget ? 'Edit Budget' : 'Set Budget'}</span>
               </button>
+              {trip.status !== 'CANCELLED' ? (
+                <button
+                  onClick={handleCancelTripClick}
+                  className="btn-hero-cancel-pill"
+                  title="Cancel Trip"
+                >
+                  <XCircle size={15} />
+                  <span>Cancel Trip</span>
+                </button>
+              ) : (
+                <div className="hero-cancelled-tag">
+                  <Ban size={15} />
+                  <span>Trip Cancelled</span>
+                </div>
+              )}
             </div>
           </div>
 
@@ -845,6 +1134,17 @@ const TripDetailsPage = () => {
             </div>
 
             <div className="hero-metric-item">
+              <Users size={18} />
+              <div>
+                <span className="metric-title">Trip Members</span>
+                <span className="metric-val">
+                  {members.length || 1} {members.length === 1 ? 'Person' : 'People'}
+                  {trip?.user?.fullName ? ` (Owner: ${trip.user.fullName.split(' ')[0]})` : ''}
+                </span>
+              </div>
+            </div>
+
+            <div className="hero-metric-item">
               <CreditCard size={18} />
               <div>
                 <span className="metric-title">Expenses Logged</span>
@@ -859,7 +1159,7 @@ const TripDetailsPage = () => {
               <div>
                 <span className="metric-title">Remaining Budget</span>
                 <span className={`metric-val ${isOverBudget ? 'text-deficit' : 'text-surplus'}`}>
-                  {formatMoney(Math.abs(remainingBudgetAmount), activeCurrencyCode)} {isOverBudget ? 'Deficit' : 'Surplus'}
+                  {isOverBudget ? '-' : ''}{formatMoney(Math.abs(remainingBudgetAmount), activeCurrencyCode)} {isOverBudget ? '(Deficit)' : '(Surplus)'}
                 </span>
               </div>
             </div>
@@ -871,12 +1171,24 @@ const TripDetailsPage = () => {
       <div className="trip-section-nav" role="tablist" aria-label="Trip Views">
         <button
           role="tab"
-          aria-selected={activeSection === 'all'}
-          onClick={() => setActiveSection('all')}
-          className={`section-tab-btn ${activeSection === 'all' ? 'active' : ''}`}
+          aria-selected={activeSection === 'members'}
+          onClick={() => setActiveSection('members')}
+          className={`section-tab-btn ${activeSection === 'members' ? 'active' : ''}`}
         >
-          <Layers size={16} />
-          <span>Full Dashboard</span>
+          <Users size={16} />
+          <span>People & Members</span>
+          {members.length > 0 && (
+            <span className="tab-pill-badge">{members.length}</span>
+          )}
+        </button>
+        <button
+          role="tab"
+          aria-selected={activeSection === 'itinerary' || activeSection === 'all'}
+          onClick={() => setActiveSection('itinerary')}
+          className={`section-tab-btn ${activeSection === 'itinerary' || activeSection === 'all' ? 'active' : ''}`}
+        >
+          <Calendar size={16} />
+          <span>Daily Schedule ({days.length} Days)</span>
         </button>
         <button
           role="tab"
@@ -889,15 +1201,6 @@ const TripDetailsPage = () => {
           {expenses.length > 0 && (
             <span className="tab-pill-badge">{expenses.length} logged</span>
           )}
-        </button>
-        <button
-          role="tab"
-          aria-selected={activeSection === 'itinerary'}
-          onClick={() => setActiveSection('itinerary')}
-          className={`section-tab-btn ${activeSection === 'itinerary' ? 'active' : ''}`}
-        >
-          <Calendar size={16} />
-          <span>Daily Schedule ({days.length} Days)</span>
         </button>
       </div>
 
@@ -1007,7 +1310,7 @@ const TripDetailsPage = () => {
                 </div>
               </div>
               <div className="passport-amount-display">
-                <span className="passport-currency-symbol">{getCurrencySymbol(activeCurrencyCode)}</span>
+                <span className="passport-currency-symbol">{isOverBudget ? '-' : ''}{getCurrencySymbol(activeCurrencyCode)}</span>
                 <span className={`passport-amount-number ${isOverBudget ? 'text-deficit' : 'text-surplus'}`}>
                   {Math.round(Math.abs(remainingBudgetAmount)).toLocaleString()}
                 </span>
@@ -1017,9 +1320,30 @@ const TripDetailsPage = () => {
                   {isOverBudget ? 'Exceeds Total Budget' : 'Safe Spending Margin'}
                 </span>
                 <span className="balance-pct-tag">
-                  {isOverBudget ? 'Over Budget' : `${100 - budgetSpentPct}% left`}
+                  {isOverBudget ? `${budgetSpentPct}% spent (Over Budget)` : `${100 - budgetSpentPct}% left`}
                 </span>
               </div>
+            </div>
+          </div>
+
+          {/* Real-time Budget Progress Bar */}
+          <div className="budget-progress-strip">
+            <div className="progress-strip-header">
+              <div className="progress-label-group">
+                <span className="progress-title">Budget Utilization</span>
+                <span className={`progress-badge ${isOverBudget ? 'badge-danger' : budgetSpentPct > 80 ? 'badge-warning' : 'badge-good'}`}>
+                  {isOverBudget ? `Over Budget (${budgetSpentPct}%)` : `${budgetSpentPct}% Spent`}
+                </span>
+              </div>
+              <span className="progress-stat-fraction">
+                {formatMoney(totalSpentExpenses, activeCurrencyCode)} of {formatMoney(activeBudgetAmount, activeCurrencyCode)} ({budgetSpentPct}%)
+              </span>
+            </div>
+            <div className="budget-progress-track">
+              <div
+                className={`budget-progress-fill ${isOverBudget ? 'fill-danger' : budgetSpentPct > 80 ? 'fill-warning' : 'fill-good'}`}
+                style={{ width: `${progressBarWidth}%` }}
+              ></div>
             </div>
           </div>
 
@@ -1032,7 +1356,9 @@ const TripDetailsPage = () => {
                   <PieChart size={18} className="analytics-icon" />
                   <div>
                     <h3 className="analytics-title">Spending by Category</h3>
-                    <span className="analytics-sub">Live visual distribution from category API</span>
+                    <span className="analytics-sub">
+                      {trip?.title ? `${trip.title} • ` : ''}Category Breakdown
+                    </span>
                   </div>
                 </div>
 
@@ -1056,7 +1382,7 @@ const TripDetailsPage = () => {
                 </div>
               </div>
 
-              {categorySummaries.length === 0 ? (
+              {computedCategorySummaries.length === 0 ? (
                 <div className="chart-empty-state">
                   <Receipt size={36} className="empty-chart-icon" />
                   <h4>No Category Expenses Yet</h4>
@@ -1074,10 +1400,19 @@ const TripDetailsPage = () => {
 
                   {/* Bespoke Category Legend Grid */}
                   <div className="category-legend-grid">
-                    {categorySummaries.map((catSummary) => {
+                    {computedCategorySummaries.map((catSummary) => {
                       const matchedCat = FIXED_EXPENSE_CATEGORIES.find(
                         (c) => c.id.toLowerCase() === catSummary.category.toLowerCase()
                       ) || { color: '#94a3b8', emoji: '🏷️' };
+
+                      const catAmt = typeof catSummary.totalAmount === 'number'
+                        ? catSummary.totalAmount
+                        : parseFloat(catSummary.totalAmount) || 0;
+                      const totalSpent = computedCategorySummaries.reduce(
+                        (sum, c) => sum + (typeof c.totalAmount === 'number' ? c.totalAmount : parseFloat(c.totalAmount) || 0),
+                        0
+                      );
+                      const pct = totalSpent > 0 ? ((catAmt / totalSpent) * 100).toFixed(1) : '0.0';
 
                       return (
                         <div key={catSummary.category} className="legend-chip">
@@ -1089,11 +1424,9 @@ const TripDetailsPage = () => {
                             {matchedCat.emoji} {catSummary.category}
                           </span>
                           <span className="legend-cat-amt">
-                            {formatMoney(catSummary.totalAmount, activeCurrencyCode)}
+                            {formatMoney(catAmt, activeCurrencyCode)}
                           </span>
-                          {catSummary.percentage !== undefined && (
-                            <span className="legend-cat-pct">{catSummary.percentage}%</span>
-                          )}
+                          <span className="legend-cat-pct">{pct}%</span>
                         </div>
                       );
                     })}
@@ -1109,7 +1442,7 @@ const TripDetailsPage = () => {
                   <Coins size={18} className="analytics-icon" />
                   <div>
                     <h3 className="analytics-title">Category Allocations & Burn</h3>
-                    <span className="analytics-sub">Planned target vs logged expense</span>
+                    <span className="analytics-sub">Planned target vs real spending</span>
                   </div>
                 </div>
               </div>
@@ -1123,43 +1456,69 @@ const TripDetailsPage = () => {
                     if (fc.id === 'Food') planned = parseFloat(budget.foodBudget) || 0;
                     if (fc.id === 'Transportation') planned = parseFloat(budget.transportationBudget) || 0;
                     if (fc.id === 'Entertainment') planned = parseFloat(budget.activitiesBudget) || 0;
-                    if (fc.id === 'Miscellaneous') planned = parseFloat(budget.emergencyBudget) || 0;
+                    if (fc.id === 'Shopping') planned = parseFloat(budget.emergencyBudget) || 0;
                   }
 
-                  // Find actual spent
-                  const actualObj = categorySummaries.find(
-                    (cs) => cs.category.toLowerCase() === fc.id.toLowerCase()
-                  );
-                  const actual = actualObj ? parseFloat(actualObj.totalAmount) : 0;
-                  const ratio = planned > 0 ? Math.min(Math.round((actual / planned) * 100), 100) : (actual > 0 ? 100 : 0);
+                  // Find actual spent dynamically from expenses list
+                  const spent = expenses
+                    .filter((e) => e.category?.toLowerCase() === fc.id.toLowerCase())
+                    .reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0);
+
+                  const isOver = planned > 0 && spent > planned;
+                  const overAmt = isOver ? spent - planned : 0;
+                  const remainingAmt = planned > 0 ? Math.max(planned - spent, 0) : 0;
+                  const pct = planned > 0 ? (spent / planned) * 100 : 0;
+                  const progressWidth = planned > 0 ? Math.min(pct, 100) : (spent > 0 ? 100 : 0);
 
                   const IconComp = fc.icon;
 
                   return (
-                    <div key={fc.id} className="category-burn-row">
+                    <div key={fc.id} className={`category-burn-row ${isOver ? 'is-over-budget' : ''}`}>
                       <div className="burn-row-header">
                         <div className="burn-cat-title">
-                          <span className="burn-cat-icon" style={{ color: fc.color }}>
+                          <span className="burn-cat-icon" style={{ color: fc.color, backgroundColor: `${fc.color}15` }}>
                             <IconComp size={15} />
                           </span>
-                          <span className="burn-cat-text">{fc.label}</span>
+                          <div className="burn-title-block">
+                            <span className="burn-cat-text">{fc.label}</span>
+                            {isOver && (
+                              <span className="burn-over-pill">
+                                Over by {formatMoney(overAmt, activeCurrencyCode)} ({pct.toFixed(0)}%)
+                              </span>
+                            )}
+                          </div>
                         </div>
                         <div className="burn-numbers">
-                          <span className="burn-spent-num">{formatMoney(actual, activeCurrencyCode)}</span>
-                          {planned > 0 && (
+                          <span className="burn-spent-num">{formatMoney(spent, activeCurrencyCode)}</span>
+                          {planned > 0 ? (
                             <span className="burn-planned-num">/ {formatMoney(planned, activeCurrencyCode)}</span>
+                          ) : (
+                            <span className="burn-no-limit-tag">No target</span>
                           )}
                         </div>
                       </div>
 
                       <div className="burn-progress-track">
                         <div
-                          className="burn-progress-fill"
+                          className={`burn-progress-fill ${isOver ? 'fill-overbudget' : pct > 85 ? 'fill-warning' : ''}`}
                           style={{
-                            width: `${ratio}%`,
-                            backgroundColor: ratio > 90 ? '#ef4444' : fc.color,
+                            width: `${progressWidth}%`,
+                            backgroundColor: isOver ? '#ef4444' : pct > 85 ? '#f59e0b' : fc.color,
                           }}
                         ></div>
+                      </div>
+
+                      <div className="burn-row-footer">
+                        <span className="burn-usage-text">
+                          {planned > 0
+                            ? `${pct.toFixed(1)}% used`
+                            : (spent > 0 ? `${formatMoney(spent, activeCurrencyCode)} logged` : '0% used')}
+                        </span>
+                        {planned > 0 && !isOver && (
+                          <span className="burn-remaining-text">
+                            {formatMoney(remainingAmt, activeCurrencyCode)} left
+                          </span>
+                        )}
                       </div>
                     </div>
                   );
@@ -1233,14 +1592,16 @@ const TripDetailsPage = () => {
             {/* Expense Rows List */}
             {filteredExpenses.length === 0 ? (
               <div className="journal-empty-state">
-                <Receipt size={40} className="journal-empty-icon" />
-                <h4>No Expenses Found</h4>
-                <p>
+                <div className="empty-journal-icon-bubble">
+                  <Receipt size={28} />
+                </div>
+                <h4 className="empty-journal-title">No Expenses Found</h4>
+                <p className="empty-journal-desc">
                   {expenseSearchQuery || expenseFilterCategory !== 'ALL'
                     ? 'No expense matches the selected filter or search query.'
                     : 'No expenses have been recorded for this trip yet.'}
                 </p>
-                <button onClick={openAddExpenseModal} className="btn-primary mt-3">
+                <button onClick={openAddExpenseModal} className="btn-primary btn-log-expense-empty">
                   <Plus size={15} />
                   <span>Log an Expense</span>
                 </button>
@@ -1281,10 +1642,8 @@ const TripDetailsPage = () => {
                           {exp.receiptUrl && (
                             <a
                               href={exp.receiptUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
                               className="expense-receipt-link"
-                              title="Open receipt in new tab"
+                              title="Open receipt link"
                             >
                               <ExternalLink size={12} />
                               <span>View Receipt</span>
@@ -1404,14 +1763,21 @@ const TripDetailsPage = () => {
                     {/* Activities list for this day */}
                     <div className="activities-container">
                       {!day.activities || day.activities.length === 0 ? (
-                        <div className="no-activities-box">
-                          <p>No activities scheduled for this day yet.</p>
+                        <div className="itinerary-empty-activities-card">
+                          <div className="empty-calendar-icon-bubble">
+                            <Calendar size={28} />
+                          </div>
+                          <h4 className="empty-activities-title">No activities planned yet</h4>
+                          <p className="empty-activities-desc">
+                            Start building your itinerary for this day by adding your first activity.
+                          </p>
                           <button
+                            type="button"
                             onClick={() => openAddActivityModal(day.id)}
-                            className="btn-inline-add-act"
+                            className="btn-primary btn-schedule-activity-empty"
                           >
-                            <Plus size={13} />
-                            <span>Schedule an activity</span>
+                            <Plus size={15} />
+                            <span>Schedule an Activity</span>
                           </button>
                         </div>
                       ) : (
@@ -1475,6 +1841,191 @@ const TripDetailsPage = () => {
       )}
 
       {/* ====================================================================
+          3. PEOPLE / TRIP MEMBERS & COLLABORATION MODULE
+          ==================================================================== */}
+      {(activeSection === 'all' || activeSection === 'members') && (
+        <section className="trip-members-section" id="members-hub">
+          <div className="members-header-panel">
+            <div className="members-title-group">
+              <div className="members-icon-bubble">
+                <Users size={22} />
+              </div>
+              <div>
+                <div className="members-badge-row">
+                  <span className="members-tag-stamp">Voyage Companions</span>
+                  <span className="members-count-badge">
+                    {members.length} {members.length === 1 ? 'Member' : 'Members'}
+                  </span>
+                </div>
+                <h2 className="members-main-title">People & Trip Members</h2>
+                <p className="members-subtitle">
+                  Manage travel companions, role assignments, and collaboration access for this itinerary.
+                </p>
+              </div>
+            </div>
+
+            {canManageMembers && (
+              <button
+                onClick={handleOpenInviteModal}
+                className="btn-primary btn-invite-member"
+                title="Invite people by email"
+              >
+                <UserPlus size={16} />
+                <span>+ Invite People</span>
+              </button>
+            )}
+          </div>
+
+          <div className="members-list-container">
+            {members.length === 0 ? (
+              <div className="members-empty-box">
+                <Users size={36} className="empty-members-icon" />
+                <h4>No Members Added Yet</h4>
+                <p>Invite friends or fellow travelers by email to plan this journey together.</p>
+                {canManageMembers && (
+                  <button onClick={handleOpenInviteModal} className="btn-primary mt-2">
+                    <UserPlus size={15} />
+                    <span>Invite First Person</span>
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div className="members-cards-grid">
+                {members.map((member) => {
+                  const isOwnerMember = member.role === 'OWNER';
+                  const isAdminMember = member.role === 'GROUP_ADMIN';
+                  const isSelf = member.userId === currentUser?.id;
+                  const initials = getInitials(member.fullName);
+
+                  return (
+                    <div key={member.userId || member.email} className="member-card-row">
+                      <div className="member-avatar-col">
+                        <div
+                          className={`member-avatar-circle ${
+                            isOwnerMember
+                              ? 'owner-avatar'
+                              : isAdminMember
+                              ? 'admin-avatar'
+                              : 'member-avatar'
+                          }`}
+                        >
+                          {initials}
+                        </div>
+                      </div>
+
+                      <div className="member-info-col">
+                        <div className="member-name-row">
+                          <h4 className="member-full-name">{member.fullName}</h4>
+                          {isSelf && <span className="member-self-badge">(You)</span>}
+                        </div>
+                        <div className="member-meta-row">
+                          {member.email && (
+                            <span className="member-email-text">{member.email}</span>
+                          )}
+                          {member.joinedAt && (
+                            <span className="member-joined-text">
+                              • Joined{' '}
+                              {new Date(member.joinedAt).toLocaleDateString(undefined, {
+                                month: 'short',
+                                day: 'numeric',
+                                year: 'numeric',
+                              })}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="member-role-col">
+                        <span
+                          className={`member-role-pill ${
+                            isOwnerMember
+                              ? 'role-owner'
+                              : isAdminMember
+                              ? 'role-admin'
+                              : 'role-member'
+                          }`}
+                        >
+                          {isOwnerMember ? (
+                            <>
+                              <ShieldCheck size={12} /> Owner
+                            </>
+                          ) : isAdminMember ? (
+                            <>
+                              <ShieldCheck size={12} /> Group Admin
+                            </>
+                          ) : (
+                            <>
+                              <UserIcon size={12} /> Member
+                            </>
+                          )}
+                        </span>
+                      </div>
+
+                      {/* Actions Menu for Owner / Group Admin */}
+                      {canManageMembers && !isOwnerMember && (
+                        <div className="member-menu-col">
+                          <div className="member-dropdown-wrap">
+                            <button
+                              type="button"
+                              className="btn-member-menu"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setOpenMemberMenuId(
+                                  openMemberMenuId === member.userId ? null : member.userId
+                                );
+                              }}
+                              aria-label="Member options"
+                              title="Member options"
+                            >
+                              <MoreVertical size={16} />
+                            </button>
+
+                            {openMemberMenuId === member.userId && (
+                              <div
+                                className="member-dropdown-popover"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                {isTripOwner && (
+                                  <button
+                                    type="button"
+                                    className="dropdown-item-action"
+                                    onClick={() => handleToggleRole(member)}
+                                  >
+                                    <ShieldCheck size={14} />
+                                    <span>
+                                      {isAdminMember
+                                        ? 'Change to Member'
+                                        : 'Promote to Group Admin'}
+                                    </span>
+                                  </button>
+                                )}
+
+                                {(isTripOwner ||
+                                  (isGroupAdmin && member.role === 'MEMBER')) && (
+                                  <button
+                                    type="button"
+                                    className="dropdown-item-action danger"
+                                    onClick={() => handleRemoveMember(member)}
+                                  >
+                                    <UserMinus size={14} />
+                                    <span>Remove from Trip</span>
+                                  </button>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </section>
+      )}
+
+      {/* ====================================================================
           MODAL 1: ADD / EDIT EXPENSE MODAL
           ==================================================================== */}
       {isExpenseModalOpen && (
@@ -1532,6 +2083,41 @@ const TripDetailsPage = () => {
                 </select>
               </div>
 
+              {/* Paid By Trip Member Dropdown */}
+              <div className="form-group">
+                <label htmlFor="expPayer">Paid By</label>
+                <select
+                  id="expPayer"
+                  value={expenseFormData.payerId || ''}
+                  onChange={(e) =>
+                    setExpenseFormData({
+                      ...expenseFormData,
+                      payerId: e.target.value ? Number(e.target.value) : '',
+                    })
+                  }
+                  className="form-input form-select"
+                >
+                  {members && members.length > 0 ? (
+                    members.map((m) => (
+                      <option key={m.userId || m.email} value={m.userId || ''}>
+                        {m.fullName || m.name || m.email}{' '}
+                        {m.role
+                          ? `(${
+                              m.role === 'OWNER'
+                                ? 'Owner'
+                                : m.role === 'GROUP_ADMIN'
+                                ? 'Group Admin'
+                                : 'Member'
+                            })`
+                          : ''}
+                      </option>
+                    ))
+                  ) : (
+                    <option value="">{trip?.user?.fullName || currentUser?.fullName || 'Trip Owner'}</option>
+                  )}
+                </select>
+              </div>
+
               {/* Title */}
               <div className="form-group">
                 <label htmlFor="expTitle">Expense Name / Title *</label>
@@ -1564,14 +2150,11 @@ const TripDetailsPage = () => {
                 </div>
 
                 <div className="form-group half-width">
-                  <label htmlFor="expDate">Expense Date *</label>
-                  <input
-                    id="expDate"
-                    type="date"
+                  <label>Expense Date *</label>
+                  <DatePicker
                     value={expenseFormData.expenseDate}
-                    onChange={(e) => setExpenseFormData({ ...expenseFormData, expenseDate: e.target.value })}
-                    required
-                    className="form-input"
+                    onChange={(d) => setExpenseFormData({ ...expenseFormData, expenseDate: d })}
+                    placeholder="Select expense date"
                   />
                 </div>
               </div>
@@ -1800,13 +2383,13 @@ const TripDetailsPage = () => {
                 </div>
 
                 <div className="form-group">
-                  <label htmlFor="bufferBudget">🛡️ Emergency Buffer</label>
+                  <label htmlFor="bufferBudget">🛍️ Shopping & Extras</label>
                   <input
                     id="bufferBudget"
                     type="number"
                     step="0.01"
                     min="0"
-                    placeholder="e.g. 150"
+                    placeholder="e.g. 200"
                     value={budgetFormData.emergencyBudget}
                     onChange={(e) => setBudgetFormData({ ...budgetFormData, emergencyBudget: e.target.value })}
                     className="form-input"
@@ -1892,13 +2475,11 @@ const TripDetailsPage = () => {
                   />
                 </div>
                 <div className="form-group half-width">
-                  <label htmlFor="dayDate">Date</label>
-                  <input
-                    id="dayDate"
-                    type="date"
+                  <label>Date</label>
+                  <DatePicker
                     value={dayFormData.date}
-                    onChange={(e) => setDayFormData({ ...dayFormData, date: e.target.value })}
-                    className="form-input"
+                    onChange={(d) => setDayFormData({ ...dayFormData, date: d })}
+                    placeholder="Select itinerary date"
                   />
                 </div>
               </div>
@@ -2053,6 +2634,99 @@ const TripDetailsPage = () => {
           </div>
         </div>
       )}
+
+      {/* ====================================================================
+          MODAL 5: INVITE PEOPLE / MEMBERS MODAL
+          ==================================================================== */}
+      {isInviteModalOpen && (
+        <div
+          className="modal-backdrop"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) handleCloseInviteModal();
+          }}
+        >
+          <div
+            className="modal-container modal-invite-container"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="invite-modal-title"
+          >
+            <div className="modal-header">
+              <div className="modal-title-with-icon">
+                <UserPlus size={20} className="modal-header-icon" />
+                <h2 id="invite-modal-title">Invite People to Trip</h2>
+              </div>
+              <button
+                onClick={handleCloseInviteModal}
+                className="btn-close-modal"
+                aria-label="Close dialog"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {inviteError && (
+              <div className="alert-box alert-error mb-3">
+                <AlertCircle size={16} />
+                <span>{inviteError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleInviteSubmit} className="modal-form">
+              <div className="form-group">
+                <label htmlFor="inviteModalEmail">Email Address *</label>
+                <div className="input-with-icon">
+                  <Mail size={16} className="field-icon" />
+                  <input
+                    id="inviteModalEmail"
+                    type="email"
+                    placeholder="e.g. friend@example.com"
+                    value={inviteEmail}
+                    onChange={(e) => {
+                      setInviteEmail(e.target.value);
+                      if (inviteError) setInviteError('');
+                    }}
+                    required
+                    className="form-input with-icon"
+                    autoFocus
+                  />
+                </div>
+                <p className="form-help-text mt-1">
+                  We'll notify them and add them as a trip member so they can collaborate on itineraries and expenses.
+                </p>
+              </div>
+
+              <div className="modal-actions">
+                <button
+                  type="button"
+                  onClick={handleCloseInviteModal}
+                  className="btn-secondary"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={inviteLoading}
+                  className="btn-primary"
+                >
+                  {inviteLoading ? 'Sending Invitation...' : 'Send Invitation'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* CONFIRM ACTION MODAL */}
+      <ConfirmModal
+        isOpen={confirmDialog.isOpen}
+        title={confirmDialog.title}
+        message={confirmDialog.message}
+        confirmText={confirmDialog.confirmText}
+        danger={confirmDialog.danger}
+        onConfirm={confirmDialog.onConfirm}
+        onCancel={() => setConfirmDialog((prev) => ({ ...prev, isOpen: false }))}
+      />
     </div>
   );
 };

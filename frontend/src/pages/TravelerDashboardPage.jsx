@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   Compass,
@@ -11,23 +11,57 @@ import {
   Briefcase,
   AlertCircle,
   PieChart as PieChartIcon,
-  Sparkles,
   ChevronRight,
+  X,
+  CreditCard,
+  Tag,
+  FileText,
+  CheckCircle2,
 } from 'lucide-react';
 import { dashboardApi } from '../api/dashboardApi';
+import { expenseApi } from '../api/expenseApi';
+import { tripApi } from '../api/tripApi';
 import { useAuth } from '../context/AuthContext';
+import { useToast } from '../context/ToastContext';
+import DatePicker from '../components/DatePicker';
 import Chart from 'chart.js/auto';
+
+const CATEGORY_OPTIONS = [
+  'Transportation',
+  'Hotel',
+  'Food',
+  'Shopping',
+  'Entertainment',
+];
 
 const TravelerDashboardPage = () => {
   const { user } = useAuth();
+  const { showToast } = useToast();
   const navigate = useNavigate();
+
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+
+  // Add Expense Modal State
+  const [isAddExpenseOpen, setIsAddExpenseOpen] = useState(false);
+  const [userTrips, setUserTrips] = useState([]);
+  const [loadingTrips, setLoadingTrips] = useState(false);
+  const [expenseSubmitting, setExpenseSubmitting] = useState(false);
+  const [expenseError, setExpenseError] = useState('');
+
+  const [expenseForm, setExpenseForm] = useState({
+    tripId: '',
+    category: 'Food',
+    amount: '',
+    expenseDate: new Date().toISOString().split('T')[0],
+    description: '',
+  });
+
   const chartRef = useRef(null);
   const chartInstanceRef = useRef(null);
 
-  const fetchDashboard = async () => {
+  const fetchDashboard = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
@@ -39,15 +73,119 @@ const TravelerDashboardPage = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     fetchDashboard();
-  }, []);
+  }, [fetchDashboard]);
+
+  // Load user trips for Add Expense dropdown (DO NOT auto-select any trip)
+  const loadUserTrips = async () => {
+    setLoadingTrips(true);
+    try {
+      const trips = await tripApi.getTrips();
+      setUserTrips(trips || []);
+    } catch (err) {
+      console.error('Failed to load trips for expense modal:', err);
+    } finally {
+      setLoadingTrips(false);
+    }
+  };
+
+  const handleOpenAddExpense = (defaultTripId = null) => {
+    setExpenseError('');
+    setIsAddExpenseOpen(true);
+    loadUserTrips();
+    setExpenseForm({
+      tripId: defaultTripId ? defaultTripId.toString() : '',
+      category: 'Food',
+      amount: '',
+      expenseDate: new Date().toISOString().split('T')[0],
+      description: '',
+    });
+  };
+
+  const handleCloseAddExpense = () => {
+    setIsAddExpenseOpen(false);
+    setExpenseError('');
+  };
+
+  const handleExpenseInputChange = (e) => {
+    const { name, value } = e.target;
+    setExpenseForm((prev) => ({ ...prev, [name]: value }));
+  };
+
+  const handleAddExpenseSubmit = async (e) => {
+    e.preventDefault();
+    setExpenseError('');
+
+    const tripId = expenseForm.tripId;
+    if (!tripId) {
+      setExpenseError('Please select a trip.');
+      return;
+    }
+
+    const amountNum = parseFloat(expenseForm.amount);
+    if (isNaN(amountNum) || amountNum <= 0) {
+      setExpenseError('Please enter a valid expense amount greater than 0.');
+      return;
+    }
+
+    if (!expenseForm.category) {
+      setExpenseError('Please select an expense category.');
+      return;
+    }
+
+    if (!expenseForm.expenseDate) {
+      setExpenseError('Please select an expense date.');
+      return;
+    }
+
+    setExpenseSubmitting(true);
+    try {
+      const payload = {
+        title: expenseForm.description?.trim() || `${expenseForm.category} Expense`,
+        description: expenseForm.description?.trim() || '',
+        category: expenseForm.category,
+        amount: amountNum,
+        expenseDate: expenseForm.expenseDate,
+      };
+
+      await expenseApi.createExpense(tripId, payload);
+
+      showToast('Expense added successfully!', 'success');
+      setIsAddExpenseOpen(false);
+
+      // Reset form
+      setExpenseForm({
+        tripId: '',
+        category: 'Food',
+        amount: '',
+        expenseDate: new Date().toISOString().split('T')[0],
+        description: '',
+      });
+
+      // Refresh Dashboard data immediately
+      await fetchDashboard();
+    } catch (err) {
+      console.error('Failed to add expense:', err);
+      const errMsg =
+        err?.response?.data?.message ||
+        err?.response?.data?.error ||
+        'Unable to add expense. Please try again.';
+      setExpenseError(errMsg);
+    } finally {
+      setExpenseSubmitting(false);
+    }
+  };
 
   // Initialize and update Chart.js instance when data arrives
   useEffect(() => {
     if (!data?.expenseSummary || data.expenseSummary.length === 0 || !chartRef.current) {
+      if (chartInstanceRef.current) {
+        chartInstanceRef.current.destroy();
+        chartInstanceRef.current = null;
+      }
       return;
     }
 
@@ -59,12 +197,13 @@ const TravelerDashboardPage = () => {
     const values = data.expenseSummary.map((item) => Number(item.amount) || 0);
 
     const backgroundColors = [
-      '#0284c7', // Primary Blue
+      '#0284c7', // Primary Sky Blue
       '#0d9488', // Teal
       '#d97706', // Amber
       '#059669', // Emerald
       '#7c3aed', // Purple
       '#e11d48', // Rose
+      '#ea580c', // Orange
       '#64748b', // Slate
     ];
 
@@ -90,7 +229,7 @@ const TravelerDashboardPage = () => {
             position: 'bottom',
             labels: {
               boxWidth: 12,
-              padding: 14,
+              padding: 12,
               font: {
                 size: 11,
                 family: "'Plus Jakarta Sans', sans-serif",
@@ -103,7 +242,7 @@ const TravelerDashboardPage = () => {
               label: function (context) {
                 const label = context.label || '';
                 const val = context.raw || 0;
-                return ` ${label}: ₹${Number(val).toLocaleString()}`;
+                return ` ${label}: ₹${Number(val).toLocaleString('en-IN')}`;
               },
             },
           },
@@ -126,13 +265,9 @@ const TravelerDashboardPage = () => {
 
   return (
     <div className="dashboard-page-container">
-      {/* 1. HERO HEADER */}
+      {/* 1. HERO HEADER (Clean, Professional, No Command Center Badge) */}
       <div className="dashboard-hero-header">
         <div className="dashboard-welcome-area">
-          <div className="dashboard-badge-pill">
-            <Sparkles size={13} />
-            <span>Traveler Command Center</span>
-          </div>
           <h1 className="dashboard-title">
             Welcome back, {user?.fullName?.split(' ')[0] || user?.email?.split('@')[0] || 'Traveler'}!
           </h1>
@@ -142,11 +277,19 @@ const TravelerDashboardPage = () => {
         </div>
 
         <div className="dashboard-action-group">
+          <button
+            type="button"
+            className="btn-add-expense-top"
+            onClick={() => handleOpenAddExpense()}
+            title="Add a new expense"
+          >
+            <Plus size={16} /> Add Expense
+          </button>
           <Link to="/trips?action=create" className="btn-primary-action">
-            <Plus size={16} /> Plan New Trip
-          </Link>
-          <Link to="/trips" className="btn-secondary-action">
-            <Briefcase size={16} /> All Trips
+            <Plus size={16} />{' '}
+            {!data?.travelStats?.totalTrips || data.travelStats.totalTrips === 0
+              ? 'Create Your First Trip'
+              : 'New Trip'}
           </Link>
         </div>
       </div>
@@ -230,13 +373,13 @@ const TravelerDashboardPage = () => {
                   </Link>
                 </div>
 
-                {(!data?.upcomingTrips || data.upcomingTrips.length === 0) ? (
+                {!data?.upcomingTrips || data.upcomingTrips.length === 0 ? (
                   <div className="widget-empty-box">
                     <Compass size={36} className="empty-icon-muted" />
                     <h4>No Upcoming Trips Scheduled</h4>
                     <p>Start planning your next getaway and track your itinerary schedule here.</p>
-                    <Link to="/trips?action=create" className="btn-primary-compact">
-                      <Plus size={14} /> Create Trip
+                    <Link to="/trips?action=create" className="btn-primary-action">
+                      <Plus size={16} /> Create Your First Trip
                     </Link>
                   </div>
                 ) : (
@@ -305,7 +448,9 @@ const TravelerDashboardPage = () => {
                     <span className="kpi-label">Net Remaining Balance</span>
                     <strong
                       className={`kpi-value ${
-                        Number(data?.budgetOverview?.remainingBudget) < 0 ? 'negative' : 'positive'
+                        Number(data?.budgetOverview?.remainingBudget) < 0
+                          ? 'negative'
+                          : 'positive'
                       }`}
                     >
                       {formatCurrency(data?.budgetOverview?.remainingBudget)}
@@ -361,13 +506,29 @@ const TravelerDashboardPage = () => {
                     <PieChartIcon size={18} className="widget-icon" />
                     <h2>Expense Category Breakdown</h2>
                   </div>
+                  <button
+                    type="button"
+                    className="widget-add-expense-link"
+                    onClick={() => handleOpenAddExpense()}
+                  >
+                    <Plus size={14} /> Add Expense
+                  </button>
                 </div>
 
-                {(!data?.expenseSummary || data.expenseSummary.length === 0) ? (
+                {!data?.expenseSummary || data.expenseSummary.length === 0 ? (
                   <div className="widget-empty-box">
                     <DollarSign size={36} className="empty-icon-muted" />
                     <h4>No Expenses Logged Yet</h4>
-                    <p>When you record expenses for your trips, category analytics will appear here.</p>
+                    <p>
+                      When you record expenses for your trips, category analytics will appear here.
+                    </p>
+                    <button
+                      type="button"
+                      className="btn-add-expense-empty"
+                      onClick={() => handleOpenAddExpense()}
+                    >
+                      <Plus size={15} /> Log Your First Expense
+                    </button>
                   </div>
                 ) : (
                   <div className="expense-chart-container">
@@ -383,7 +544,9 @@ const TravelerDashboardPage = () => {
                             <span className="cat-count">({item.count} items)</span>
                           </div>
                           <div className="cat-row-right">
-                            <strong className="cat-amount">{formatCurrency(item.amount)}</strong>
+                            <strong className="cat-amount">
+                              {formatCurrency(item.amount)}
+                            </strong>
                             <span className="cat-pct">{item.percentage}%</span>
                           </div>
                         </div>
@@ -405,7 +568,7 @@ const TravelerDashboardPage = () => {
                   </Link>
                 </div>
 
-                {(!data?.favoriteDestinations || data.favoriteDestinations.length === 0) ? (
+                {!data?.favoriteDestinations || data.favoriteDestinations.length === 0 ? (
                   <div className="widget-empty-box">
                     <MapPin size={36} className="empty-icon-muted" />
                     <h4>No Destination Visits Yet</h4>
@@ -417,7 +580,9 @@ const TravelerDashboardPage = () => {
                       <div
                         key={dest.destinationId || idx}
                         className="visited-dest-card"
-                        onClick={() => dest.destinationId && navigate(`/destinations/${dest.destinationId}`)}
+                        onClick={() =>
+                          dest.destinationId && navigate(`/destinations/${dest.destinationId}`)
+                        }
                       >
                         <div className="visited-dest-rank">#{idx + 1}</div>
                         <div className="visited-dest-info">
@@ -425,7 +590,8 @@ const TravelerDashboardPage = () => {
                           <span className="visited-dest-country">{dest.country}</span>
                         </div>
                         <div className="visited-dest-count-tag">
-                          <strong>{dest.visitCount}</strong> {dest.visitCount === 1 ? 'trip' : 'trips'}
+                          <strong>{dest.visitCount}</strong>{' '}
+                          {dest.visitCount === 1 ? 'trip' : 'trips'}
                         </div>
                       </div>
                     ))}
@@ -435,6 +601,183 @@ const TravelerDashboardPage = () => {
             </div>
           </div>
         </>
+      )}
+
+      {/* ADD EXPENSE MODAL */}
+      {isAddExpenseOpen && (
+        <div
+          className="modal-backdrop"
+          onClick={handleCloseAddExpense}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="add-expense-modal-title"
+        >
+          <div className="modal-card add-expense-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <div className="modal-header-left">
+                <div className="modal-icon-badge">
+                  <CreditCard size={18} />
+                </div>
+                <div>
+                  <h3 id="add-expense-modal-title" className="modal-title">
+                    Add Expense
+                  </h3>
+                  <p className="modal-subtitle">Log a new expense to track your trip budget.</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                className="btn-modal-close"
+                onClick={handleCloseAddExpense}
+                aria-label="Close modal"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {expenseError && (
+              <div className="modal-error-banner">
+                <AlertCircle size={16} />
+                <span>{expenseError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleAddExpenseSubmit} className="modal-form">
+              {/* 1. Select Trip */}
+              <div className="form-group">
+                <label htmlFor="expense-trip-select" className="form-label">
+                  Trip <span className="required-star">*</span>
+                </label>
+                {loadingTrips ? (
+                  <div className="form-input-loading">Loading your trips...</div>
+                ) : userTrips.length === 0 ? (
+                  <div className="form-empty-notice">
+                    No trips found.{' '}
+                    <Link to="/trips?action=create" onClick={handleCloseAddExpense}>
+                      Create a trip first
+                    </Link>
+                  </div>
+                ) : (
+                  <select
+                    id="expense-trip-select"
+                    name="tripId"
+                    value={expenseForm.tripId}
+                    onChange={handleExpenseInputChange}
+                    className="form-select"
+                    required
+                  >
+                    <option value="" disabled>
+                      -- Select a trip --
+                    </option>
+                    {userTrips.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.title} ({t.destination?.name || 'Trip'})
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+
+              {/* 2. Category & Amount Row */}
+              <div className="form-row-two-col">
+                <div className="form-group">
+                  <label htmlFor="expense-category-select" className="form-label">
+                    Category <span className="required-star">*</span>
+                  </label>
+                  <select
+                    id="expense-category-select"
+                    name="category"
+                    value={expenseForm.category}
+                    onChange={handleExpenseInputChange}
+                    className="form-select"
+                    required
+                  >
+                    {CATEGORY_OPTIONS.map((cat) => (
+                      <option key={cat} value={cat}>
+                        {cat}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="form-group">
+                  <label htmlFor="expense-amount-input" className="form-label">
+                    Amount <span className="required-star">*</span>
+                  </label>
+                  <div className="input-with-adornment">
+                    <span className="input-adornment">₹</span>
+                    <input
+                      id="expense-amount-input"
+                      type="number"
+                      name="amount"
+                      min="0.01"
+                      step="any"
+                      placeholder="0.00"
+                      value={expenseForm.amount}
+                      onChange={handleExpenseInputChange}
+                      className="form-input with-adornment"
+                      required
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* 3. Date & Description */}
+              <div className="form-row-two-col">
+                <div className="form-group">
+                  <label className="form-label">
+                    Date <span className="required-star">*</span>
+                  </label>
+                  <DatePicker
+                    value={expenseForm.expenseDate}
+                    onChange={(d) => setExpenseForm((prev) => ({ ...prev, expenseDate: d }))}
+                    placeholder="Select expense date"
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label htmlFor="expense-description-input" className="form-label">
+                    Description <span className="optional-text">(optional)</span>
+                  </label>
+                  <input
+                    id="expense-description-input"
+                    type="text"
+                    name="description"
+                    placeholder="e.g. Dinner, Taxi fare, Museum ticket"
+                    value={expenseForm.description}
+                    onChange={handleExpenseInputChange}
+                    className="form-input"
+                  />
+                </div>
+              </div>
+
+              {/* Modal Actions */}
+              <div className="modal-actions-footer">
+                <button
+                  type="button"
+                  className="btn-modal-cancel"
+                  onClick={handleCloseAddExpense}
+                  disabled={expenseSubmitting}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="btn-modal-submit"
+                  disabled={expenseSubmitting || userTrips.length === 0}
+                >
+                  {expenseSubmitting ? (
+                    <span className="btn-loading-content">Adding...</span>
+                  ) : (
+                    <>
+                      <Plus size={16} /> Add Expense
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
     </div>
   );

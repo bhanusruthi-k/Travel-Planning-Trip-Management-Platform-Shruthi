@@ -2,7 +2,12 @@ import api from './axiosConfig';
 
 export const dashboardApi = {
   getTravelerDashboard: async () => {
-    const response = await api.get('/api/dashboard/traveler');
+    const response = await api.get('/api/dashboard');
+    return response.data;
+  },
+
+  getDashboard: async () => {
+    const response = await api.get('/api/dashboard');
     return response.data;
   },
 
@@ -11,3 +16,5 @@ export const dashboardApi = {
     return response.data;
   },
 };
+
+export default dashboardApi;
