@@ -15,6 +15,11 @@ export const dashboardApi = {
     const response = await api.get('/api/dashboard/admin');
     return response.data;
   },
+
+  getAdminExpenses: async () => {
+    const response = await api.get('/api/dashboard/admin/expenses');
+    return response.data;
+  },
 };
 
 export default dashboardApi;

@@ -39,7 +39,8 @@ const DestinationDetailsPage = () => {
   // Swipe handling state
   const touchStartX = useRef(null);
 
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, user, role } = useAuth();
+  const isAdministrator = role === 'ADMINISTRATOR' || user?.role === 'ADMINISTRATOR';
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -126,6 +127,7 @@ const DestinationDetailsPage = () => {
   };
 
   const handlePlanTrip = () => {
+    if (isAdministrator) return;
     if (!isAuthenticated) {
       navigate('/login', { state: { from: { pathname: `/trips?destinationId=${id}&action=create` } } });
     } else {
@@ -181,11 +183,13 @@ const DestinationDetailsPage = () => {
           <ArrowLeft size={16} /> Back
         </button>
 
-        <div className="details-top-actions">
-          <button onClick={handlePlanTrip} className="btn-primary-action">
-            <Plus size={16} /> Plan a Trip to {destination.name}
-          </button>
-        </div>
+        {!isAdministrator && (
+          <div className="details-top-actions">
+            <button onClick={handlePlanTrip} className="btn-primary-action">
+              <Plus size={16} /> Plan a Trip to {destination.name}
+            </button>
+          </div>
+        )}
       </div>
 
       {/* 2. INLINE DESTINATION HERO BANNER WITH DIRECT ARROW NAVIGATION */}
@@ -421,16 +425,18 @@ const DestinationDetailsPage = () => {
           )}
 
           {/* TRIP PLANNER QUICK LAUNCH */}
-          <div className="details-section-card plan-launch-card">
-            <h3 className="widget-card-title">Plan Your Expedition</h3>
-            <p className="widget-card-text">
-              Add {destination.name} to your trips to build your daily timeline, manage expenses, and track your travel budget.
-            </p>
+          {!isAdministrator && (
+            <div className="details-section-card plan-launch-card">
+              <h3 className="widget-card-title">Plan Your Expedition</h3>
+              <p className="widget-card-text">
+                Add {destination.name} to your trips to build your daily timeline, manage expenses, and track your travel budget.
+              </p>
 
-            <button onClick={handlePlanTrip} className="btn-launch-trip">
-              <Plus size={16} /> Start Planning Trip
-            </button>
-          </div>
+              <button onClick={handlePlanTrip} className="btn-launch-trip">
+                <Plus size={16} /> Start Planning Trip
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>

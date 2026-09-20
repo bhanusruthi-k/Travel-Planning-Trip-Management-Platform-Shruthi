@@ -5,6 +5,7 @@ import com.tripnest.tripnest_backend.dto.user.ChangePasswordRequest;
 import com.tripnest.tripnest_backend.dto.user.UpdateProfileRequest;
 import com.tripnest.tripnest_backend.exception.BadRequestException;
 import com.tripnest.tripnest_backend.exception.ResourceNotFoundException;
+import com.tripnest.tripnest_backend.model.Role;
 import com.tripnest.tripnest_backend.model.User;
 import com.tripnest.tripnest_backend.repository.UserRepository;
 import com.tripnest.tripnest_backend.service.AuthService;
@@ -14,6 +15,9 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.util.List;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -127,6 +131,21 @@ public class UserServiceImpl implements UserService {
     public void deleteAccount(String email) {
         String cleanEmail = cleanEmail(email);
         authService.deleteAccount(cleanEmail);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<UserDTO> getTravelers() {
+        return userRepository.findByRoleOrderByIdAsc(Role.TRAVELER).stream()
+                .filter(u -> u.getRole() == Role.TRAVELER)
+                .map(this::mapToUserDTO)
+                .collect(Collectors.toList());
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public long getTravelerCount() {
+        return userRepository.countByRole(Role.TRAVELER);
     }
 
 

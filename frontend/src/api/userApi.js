@@ -25,4 +25,9 @@ export const userApi = {
     const response = await api.delete('/api/users/me');
     return response.data;
   },
+
+  getTravelers: async () => {
+    const response = await api.get('/api/users/travelers');
+    return response.data;
+  },
 };

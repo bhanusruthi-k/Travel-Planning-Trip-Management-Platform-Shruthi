@@ -17,6 +17,9 @@ import TripsPage from './pages/TripsPage';
 import TripDetailsPage from './pages/TripDetailsPage';
 import TravelerDashboardPage from './pages/TravelerDashboardPage';
 import AdminDashboardPage from './pages/AdminDashboardPage';
+import AdminTravelersPage from './pages/AdminTravelersPage';
+import AdminTripsPage from './pages/AdminTripsPage';
+import AdminExpensesPage from './pages/AdminExpensesPage';
 import ProfilePage from './pages/ProfilePage';
 import NotificationsPage from './pages/NotificationsPage';
 import './App.css';
@@ -57,6 +60,30 @@ function App() {
                     element={
                       <ProtectedRoute roles={['ADMINISTRATOR']}>
                         <AdminDashboardPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/admin/travelers"
+                    element={
+                      <ProtectedRoute roles={['ADMINISTRATOR']}>
+                        <AdminTravelersPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/admin/trips"
+                    element={
+                      <ProtectedRoute roles={['ADMINISTRATOR']}>
+                        <AdminTripsPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/admin/expenses"
+                    element={
+                      <ProtectedRoute roles={['ADMINISTRATOR']}>
+                        <AdminExpensesPage />
                       </ProtectedRoute>
                     }
                   />

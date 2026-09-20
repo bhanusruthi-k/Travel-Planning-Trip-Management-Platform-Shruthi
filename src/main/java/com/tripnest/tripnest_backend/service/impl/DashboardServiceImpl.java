@@ -2,10 +2,12 @@ package com.tripnest.tripnest_backend.service.impl;
 
 import com.tripnest.tripnest_backend.dto.dashboard.*;
 import com.tripnest.tripnest_backend.dto.expense.CategoryExpenseSummaryDTO;
+import com.tripnest.tripnest_backend.dto.expense.ExpenseResponseDTO;
 import com.tripnest.tripnest_backend.exception.ResourceNotFoundException;
 import com.tripnest.tripnest_backend.model.*;
 import com.tripnest.tripnest_backend.repository.*;
 import com.tripnest.tripnest_backend.service.DashboardService;
+import com.tripnest.tripnest_backend.service.UserService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -24,6 +26,7 @@ import java.util.stream.Collectors;
 public class DashboardServiceImpl implements DashboardService {
 
     private final UserRepository userRepository;
+    private final UserService userService;
     private final TripRepository tripRepository;
     private final BudgetRepository budgetRepository;
     private final ExpenseRepository expenseRepository;
@@ -140,8 +143,8 @@ public class DashboardServiceImpl implements DashboardService {
     @Override
     @Transactional(readOnly = true)
     public AdminDashboardResponseDTO getAdminDashboard() {
-        // 1. User Analytics
-        long totalUsers = userRepository.count();
+        // 1. User Analytics (Registered Travelers only - strictly excludes ADMINISTRATOR)
+        long totalUsers = userService.getTravelerCount();
         UserAnalyticsDTO userAnalytics = UserAnalyticsDTO.builder()
                 .totalUsers(totalUsers)
                 .build();
@@ -189,6 +192,35 @@ public class DashboardServiceImpl implements DashboardService {
                 .tripAnalytics(tripAnalytics)
                 .destinationAnalytics(destinationAnalytics)
                 .platformStats(platformStats)
+                .build();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<ExpenseResponseDTO> getAdminExpenses() {
+        return expenseRepository.findAllWithDetails().stream()
+                .map(this::mapExpenseToDTO)
+                .collect(Collectors.toList());
+    }
+
+    private ExpenseResponseDTO mapExpenseToDTO(Expense expense) {
+        if (expense == null) return null;
+        return ExpenseResponseDTO.builder()
+                .id(expense.getId())
+                .tripId(expense.getTrip() != null ? expense.getTrip().getId() : null)
+                .tripTitle(expense.getTrip() != null ? expense.getTrip().getTitle() : null)
+                .title(expense.getTitle())
+                .description(expense.getDescription())
+                .category(expense.getCategory() != null ? expense.getCategory().getDisplayName() : null)
+                .amount(expense.getAmount())
+                .budgetId(expense.getBudget() != null ? expense.getBudget().getId() : null)
+                .expenseDate(expense.getExpenseDate())
+                .receiptUrl(expense.getReceiptUrl())
+                .payerId(expense.getPayer() != null ? expense.getPayer().getId() : null)
+                .payerName(expense.getPayer() != null ? expense.getPayer().getFullName() : null)
+                .payerEmail(expense.getPayer() != null ? expense.getPayer().getEmail() : null)
+                .createdAt(expense.getCreatedAt())
+                .updatedAt(expense.getUpdatedAt())
                 .build();
     }
 

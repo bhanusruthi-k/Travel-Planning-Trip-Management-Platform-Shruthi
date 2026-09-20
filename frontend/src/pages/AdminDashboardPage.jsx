@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import {
   Shield,
   Users,
@@ -30,6 +30,7 @@ import ConfirmModal from '../components/ConfirmModal';
 const AdminDashboardPage = () => {
   const { user } = useAuth();
   const { showToast } = useToast();
+  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('analytics'); // 'analytics' | 'destinations'
 
   // Analytics state
@@ -293,7 +294,20 @@ const AdminDashboardPage = () => {
           <>
             {/* 2. PLATFORM KPI METRIC CARDS */}
             <div className="admin-kpi-grid">
-              <div className="admin-kpi-card">
+              <div
+                className="admin-kpi-card"
+                onClick={() => navigate('/admin/travelers')}
+                style={{ cursor: 'pointer' }}
+                title="View Registered Travelers"
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    navigate('/admin/travelers');
+                  }
+                }}
+              >
                 <div className="kpi-icon-wrap blue">
                   <Users size={22} />
                 </div>
@@ -304,7 +318,20 @@ const AdminDashboardPage = () => {
                 </div>
               </div>
 
-              <div className="admin-kpi-card">
+              <div
+                className="admin-kpi-card"
+                onClick={() => navigate('/admin/trips')}
+                style={{ cursor: 'pointer' }}
+                title="View Total Platform Trips"
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    navigate('/admin/trips');
+                  }
+                }}
+              >
                 <div className="kpi-icon-wrap teal">
                   <Briefcase size={22} />
                 </div>
@@ -315,7 +342,20 @@ const AdminDashboardPage = () => {
                 </div>
               </div>
 
-              <div className="admin-kpi-card">
+              <div
+                className="admin-kpi-card"
+                onClick={() => navigate('/admin/expenses')}
+                style={{ cursor: 'pointer' }}
+                title="View Platform Expenses"
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    navigate('/admin/expenses');
+                  }
+                }}
+              >
                 <div className="kpi-icon-wrap emerald">
                   <DollarSign size={22} />
                 </div>

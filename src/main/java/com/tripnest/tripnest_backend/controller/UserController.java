@@ -4,17 +4,20 @@ import com.tripnest.tripnest_backend.dto.auth.UserDTO;
 import com.tripnest.tripnest_backend.dto.user.ChangePasswordRequest;
 import com.tripnest.tripnest_backend.dto.user.PhotoUploadRequest;
 import com.tripnest.tripnest_backend.dto.user.UpdateProfileRequest;
+import com.tripnest.tripnest_backend.model.Role;
 import com.tripnest.tripnest_backend.service.UserService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.Base64;
+import java.util.List;
 import java.util.Map;
 
 @RestController
@@ -98,5 +101,21 @@ public class UserController {
         }
         userService.deleteAccount(authentication.getName());
         return ResponseEntity.noContent().build();
+    }
+
+    @GetMapping("/travelers")
+    public ResponseEntity<List<UserDTO>> getTravelers(Authentication authentication) {
+        if (authentication == null || !authentication.isAuthenticated()) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+        }
+        boolean isAdmin = authentication.getAuthorities().stream()
+                .anyMatch(a -> a.getAuthority().equals("ROLE_ADMINISTRATOR") || a.getAuthority().equals("ADMINISTRATOR"));
+        if (!isAdmin) {
+            UserDTO profile = userService.getProfile(authentication.getName());
+            if (profile == null || profile.getRole() != Role.ADMINISTRATOR) {
+                return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+            }
+        }
+        return ResponseEntity.ok(userService.getTravelers());
     }
 }

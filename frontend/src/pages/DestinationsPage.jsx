@@ -53,7 +53,8 @@ const DestinationsPage = () => {
     photos: [],
   });
 
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, user, role } = useAuth();
+  const isAdministrator = role === 'ADMINISTRATOR' || user?.role === 'ADMINISTRATOR';
   const navigate = useNavigate();
 
   // Sync state if URL searchParams change
@@ -150,6 +151,7 @@ const DestinationsPage = () => {
 
   const handlePlanTrip = (e, destId) => {
     e.stopPropagation();
+    if (isAdministrator) return;
     if (!isAuthenticated) {
       navigate('/login', { state: { from: { pathname: `/trips?destinationId=${destId}&action=create` } } });
     } else {
@@ -386,14 +388,16 @@ const DestinationsPage = () => {
                         >
                           <Camera size={14} />
                         </button>
-                        <button
-                          type="button"
-                          className="btn-plan-quick"
-                          onClick={(e) => handlePlanTrip(e, dest.id)}
-                          title="Plan a trip to this destination"
-                        >
-                          <Plus size={14} /> Plan Trip
-                        </button>
+                        {!isAdministrator && (
+                          <button
+                            type="button"
+                            className="btn-plan-quick"
+                            onClick={(e) => handlePlanTrip(e, dest.id)}
+                            title="Plan a trip to this destination"
+                          >
+                            <Plus size={14} /> Plan Trip
+                          </button>
+                        )}
                       </div>
                     </div>
                   </div>

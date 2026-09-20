@@ -2,6 +2,7 @@ package com.tripnest.tripnest_backend.controller;
 
 import com.tripnest.tripnest_backend.dto.dashboard.AdminDashboardResponseDTO;
 import com.tripnest.tripnest_backend.dto.dashboard.TravelerDashboardResponseDTO;
+import com.tripnest.tripnest_backend.dto.expense.ExpenseResponseDTO;
 import com.tripnest.tripnest_backend.service.DashboardService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -11,6 +12,8 @@ import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
 
 @RestController
 @RequestMapping("/api/dashboard")
@@ -35,6 +38,12 @@ public class DashboardController {
     @PreAuthorize("hasRole('ADMINISTRATOR')")
     public ResponseEntity<AdminDashboardResponseDTO> getAdminDashboard() {
         return ResponseEntity.ok(dashboardService.getAdminDashboard());
+    }
+
+    @GetMapping("/admin/expenses")
+    @PreAuthorize("hasRole('ADMINISTRATOR')")
+    public ResponseEntity<List<ExpenseResponseDTO>> getAdminExpenses() {
+        return ResponseEntity.ok(dashboardService.getAdminExpenses());
     }
 }
 
